@@ -89,7 +89,10 @@ export async function checkUrl(urlId: number): Promise<void> {
 
 export async function checkAllUrls(): Promise<void> {
   try {
-    const urls = await db.execute('SELECT * FROM urls');
+    const urls = await db.execute({
+      sql: 'SELECT * FROM urls',
+      args: [],
+    });
     
     for (const row of urls.rows) {
       const urlObj: Url = {

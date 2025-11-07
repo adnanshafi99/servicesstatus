@@ -51,11 +51,13 @@ export async function GET() {
         FROM url_status 
         WHERE checked_at < datetime('now', '-7 days')
       `,
+      args: [],
     });
 
     // Count archived records
     const archivedResult = await db.execute({
       sql: 'SELECT COUNT(*) as count FROM archived_url_status',
+      args: [],
     });
 
     const oldCount = Number(oldRecordsResult.rows[0]?.count) || 0;

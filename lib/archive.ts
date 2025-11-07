@@ -31,6 +31,7 @@ export async function archiveOldStatusRecords(): Promise<{
         WHERE checked_at < datetime('now', '-7 days')
         ORDER BY checked_at ASC
       `,
+      args: [],
     });
 
     let archivedCount = 0;

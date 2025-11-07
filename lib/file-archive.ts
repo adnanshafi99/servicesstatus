@@ -12,7 +12,10 @@ export async function exportArchivedRecordsToText(): Promise<string> {
     await initDatabase();
     
     // Get all archived records, grouped by URL
-    const urlsResult = await db.execute('SELECT id, name, url FROM urls ORDER BY name');
+    const urlsResult = await db.execute({
+      sql: 'SELECT id, name, url FROM urls ORDER BY name',
+      args: [],
+    });
     
     let fileContent = 'URL Status Archive - Generated ' + new Date().toISOString() + '\n';
     fileContent += '='.repeat(80) + '\n\n';

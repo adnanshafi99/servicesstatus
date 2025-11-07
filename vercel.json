@@ -1,0 +1,32 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "env": {
+    "TURSO_DATABASE_URL": "@turso_database_url",
+    "TURSO_AUTH_TOKEN": "@turso_auth_token",
+    "CRON_SECRET": "@cron_secret"
+  },
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "50 13 * * *"
+    },
+    {
+      "path": "/api/cron",
+      "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/archive",
+      "schedule": "0 5 * * *"
+    }
+  ]
+}
+
+

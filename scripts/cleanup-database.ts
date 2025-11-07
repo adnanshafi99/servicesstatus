@@ -38,7 +38,10 @@ async function cleanupDatabase() {
 
         if (checkTable.rows.length > 0) {
           console.log(`Dropping table: ${table}...`);
-          await db.execute(`DROP TABLE IF EXISTS ${table}`);
+          await db.execute({
+            sql: `DROP TABLE IF EXISTS ${table}`,
+            args: [],
+          });
           console.log(`✓ Dropped table: ${table}\n`);
         } else {
           console.log(`⊘ Table ${table} does not exist, skipping...\n`);
@@ -53,6 +56,7 @@ async function cleanupDatabase() {
     try {
       const remainingTables = await db.execute({
         sql: `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`,
+        args: [],
       });
 
       remainingTables.rows.forEach((row: any) => {

@@ -4,10 +4,13 @@ import { checkAllUrls } from '@/lib/ping';
 // Beaumont, Texas timezone (America/Chicago - Central Time)
 const BEAUMONT_TIMEZONE = 'America/Chicago';
 
-// Scheduled check time: 7:50 AM CT (runs once per day)
-// This cron job also runs the archive task
-const SCHEDULED_HOUR = 7;
-const SCHEDULED_MINUTE = 50;
+// Scheduled check times in Central Time
+// We have 2 cron jobs: 7:50 AM CT and 1:00 PM CT
+// Archive runs at 1:00 PM CT (second cron job)
+const SCHEDULED_TIMES = [
+  { hour: 7, minute: 50 },  // 7:50 AM CT
+  { hour: 13, minute: 0 },  // 1:00 PM CT (also runs archive)
+];
 
 function isScheduledTime(): boolean {
   const now = new Date();
@@ -23,9 +26,11 @@ function isScheduledTime(): boolean {
   const currentHour = parseInt(hourStr, 10);
   const currentMinute = parseInt(minuteStr, 10);
 
-  // Check if current time matches scheduled time (within 5 minute window)
-  const timeDiff = Math.abs((currentHour * 60 + currentMinute) - (SCHEDULED_HOUR * 60 + SCHEDULED_MINUTE));
-  return timeDiff <= 5; // Allow 5 minute window for cron execution
+  // Check if current time matches any scheduled time (within 5 minute window)
+  return SCHEDULED_TIMES.some(({ hour, minute }) => {
+    const timeDiff = Math.abs((currentHour * 60 + currentMinute) - (hour * 60 + minute));
+    return timeDiff <= 5; // Allow 5 minute window for cron execution
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -37,14 +42,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify it's a scheduled time in Central Time (7:50 AM CT)
+  // Verify it's a scheduled time in Central Time
   // For manual testing, you can comment out this check
   if (!isScheduledTime()) {
     const centralTime = new Date(new Date().toLocaleString('en-US', { timeZone: BEAUMONT_TIMEZONE }));
     return NextResponse.json({ 
       success: false, 
       message: `Not a scheduled check time. Current Central Time: ${centralTime.toLocaleString()}`,
-      scheduledTime: `${SCHEDULED_HOUR}:${SCHEDULED_MINUTE.toString().padStart(2, '0')} AM CT`
+      scheduledTimes: SCHEDULED_TIMES.map(t => `${t.hour}:${t.minute.toString().padStart(2, '0')} ${t.hour >= 12 ? 'PM' : 'AM'} CT`)
     }, { status: 200 });
   }
 
@@ -52,20 +57,39 @@ export async function GET(request: NextRequest) {
     // Check all URLs
     await checkAllUrls();
     
-    // Run archive job (runs once per day at 7:50 AM CT along with URL checks)
-    try {
-      const { archiveOldStatusRecords } = await import('@/lib/archive');
-      const archiveResult = await archiveOldStatusRecords();
-      console.log(`Archive completed: ${archiveResult.archived} records archived`);
-    } catch (archiveError) {
-      console.error('Archive error during cron:', archiveError);
-      // Don't fail the entire cron job if archive fails
+    // Get current Central Time to determine if we should run archive
+    const now = new Date();
+    const centralTimeString = now.toLocaleString('en-US', {
+      timeZone: BEAUMONT_TIMEZONE,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const [hourStr, minuteStr] = centralTimeString.split(':');
+    const currentHour = parseInt(hourStr, 10);
+    const currentMinute = parseInt(minuteStr, 10);
+    
+    // Run archive job at 1:00 PM CT (13:00) - second cron job of the day
+    // Archive processes records older than 7 days (runs daily but only moves old records)
+    const shouldRunArchive = currentHour === 13 && currentMinute >= 0 && currentMinute < 5;
+    
+    if (shouldRunArchive) {
+      try {
+        const { archiveOldStatusRecords } = await import('@/lib/archive');
+        const archiveResult = await archiveOldStatusRecords();
+        console.log(`Archive completed: ${archiveResult.archived} records archived`);
+      } catch (archiveError) {
+        console.error('Archive error during cron:', archiveError);
+        // Don't fail the entire cron job if archive fails
+      }
     }
     
     const centralTime = new Date(new Date().toLocaleString('en-US', { timeZone: BEAUMONT_TIMEZONE }));
     return NextResponse.json({ 
       success: true, 
-      message: 'URLs checked and archive completed successfully',
+      message: shouldRunArchive 
+        ? 'URLs checked and archive completed successfully'
+        : 'URLs checked successfully',
       timestamp: new Date().toISOString(),
       centralTime: centralTime.toLocaleString('en-US', { timeZone: BEAUMONT_TIMEZONE })
     });

@@ -54,6 +54,32 @@ export async function GET(request: NextRequest) {
 
   try {
     await checkAllUrls();
+    
+    // Run archive job once per day at 1:00 PM CT (19:00 UTC)
+    // This consolidates cron jobs to stay within Vercel's free plan limit (2 jobs max)
+    const now = new Date();
+    const centralTimeString = now.toLocaleString('en-US', {
+      timeZone: BEAUMONT_TIMEZONE,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const [hourStr, minuteStr] = centralTimeString.split(':');
+    const currentHour = parseInt(hourStr, 10);
+    const currentMinute = parseInt(minuteStr, 10);
+    
+    // Run archive at 1:00 PM CT (13:00) - middle check of the day
+    if (currentHour === 13 && currentMinute >= 0 && currentMinute < 5) {
+      try {
+        const { archiveOldStatusRecords } = await import('@/lib/archive');
+        const archiveResult = await archiveOldStatusRecords();
+        console.log(`Archive completed: ${archiveResult.archived} records archived`);
+      } catch (archiveError) {
+        console.error('Archive error during cron:', archiveError);
+        // Don't fail the entire cron job if archive fails
+      }
+    }
+    
     const centralTime = new Date(new Date().toLocaleString('en-US', { timeZone: BEAUMONT_TIMEZONE }));
     return NextResponse.json({ 
       success: true, 

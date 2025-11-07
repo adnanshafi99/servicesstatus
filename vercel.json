@@ -11,15 +11,7 @@
     },
     {
       "path": "/api/cron",
-      "schedule": "0 19 * * *"
-    },
-    {
-      "path": "/api/cron",
-      "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/archive",
-      "schedule": "0 5 * * *"
+      "schedule": "0 4,19 * * *"
     }
   ]
 }

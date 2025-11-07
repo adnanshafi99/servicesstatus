@@ -4,11 +4,6 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "regions": ["iad1"],
-  "env": {
-    "TURSO_DATABASE_URL": "@turso_database_url",
-    "TURSO_AUTH_TOKEN": "@turso_auth_token",
-    "CRON_SECRET": "@cron_secret"
-  },
   "crons": [
     {
       "path": "/api/cron",

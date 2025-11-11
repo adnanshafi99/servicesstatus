@@ -26,7 +26,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Plus, Trash2, LogOut, RefreshCw, CheckCircle2, XCircle, Globe, Activity, Clock, AlertCircle, TrendingUp } from "lucide-react"
+import { Plus, Trash2, LogOut, RefreshCw, CheckCircle2, XCircle, Globe, Activity, Clock, AlertCircle, TrendingUp, Edit } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { UrlWithStatus } from "@/lib/types"
 import { formatBeaumontDateCompact } from "@/lib/date-utils"
 
@@ -46,19 +47,22 @@ export default function AdminDashboard() {
   const [authenticated, setAuthenticated] = useState(false)
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [editingUrl, setEditingUrl] = useState<UrlWithStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [selectedUrl, setSelectedUrl] = useState<UrlWithStatus | null>(null)
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [browserChecking, setBrowserChecking] = useState(false)
-  const [browserResults, setBrowserResults] = useState<Record<number, { status: ServiceStatus; responseTimeMs: number | null; via: "img" | "iframe" | "timeout" | "error" }>>({})
 
   // Form state
   const [newUrl, setNewUrl] = useState("")
   const [newName, setNewName] = useState("")
+  const [editUrl, setEditUrl] = useState("")
+  const [editName, setEditName] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
     checkAuth()
@@ -94,8 +98,7 @@ export default function AdminDashboard() {
   // Client-side, on-campus check using resource loading (no CORS)
   const runBrowserChecks = async () => {
     if (urls.length === 0) return
-    setBrowserChecking(true)
-    setBrowserResults({})
+    setChecking(true)
     const timeoutMs = 6000
 
     // Helper: probe via <img> to favicon (best-effort)
@@ -161,29 +164,72 @@ export default function AdminDashboard() {
       })
     }
 
-    // Run checks sequentially to avoid overwhelming network; could be parallel if desired
-    const results: Record<number, { status: ServiceStatus; responseTimeMs: number | null; via: "img" | "iframe" | "timeout" | "error" }> = {}
+    // Run checks sequentially and save results to database
     for (const u of urls) {
       try {
+        let isUp = false
+        let responseTime: number | null = null
+        let statusCode: number | null = null
+        let errorMessage: string | null = null
+
         // First try image
         const imgRes = await probeWithImage(u.url)
         if (imgRes.ok) {
-          results[u.id] = { status: "up", responseTimeMs: imgRes.ms, via: "img" }
+          isUp = true
+          responseTime = imgRes.ms
+          statusCode = 200 // Image loaded successfully
         } else {
           // Fallback to iframe
           const ifRes = await probeWithIframe(u.url)
           if (ifRes.ok) {
-            results[u.id] = { status: "up", responseTimeMs: ifRes.ms, via: "iframe" }
+            isUp = true
+            responseTime = ifRes.ms
+            statusCode = 200 // Iframe loaded successfully
           } else {
-            results[u.id] = { status: "down", responseTimeMs: null, via: "timeout" }
+            isUp = false
+            errorMessage = "Timeout or connection failed"
           }
         }
-      } catch {
-        results[u.id] = { status: "down", responseTimeMs: null, via: "error" }
+
+        // Save result to database
+        try {
+          await fetch("/api/check/browser", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              urlId: u.id,
+              isUp,
+              responseTime,
+              statusCode,
+              errorMessage,
+            }),
+          })
+        } catch (saveError) {
+          console.error(`Failed to save check result for URL ${u.id}:`, saveError)
+        }
+      } catch (error: any) {
+        // Save error result to database
+        try {
+          await fetch("/api/check/browser", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              urlId: u.id,
+              isUp: false,
+              responseTime: null,
+              statusCode: null,
+              errorMessage: error.message || "Unknown error",
+            }),
+          })
+        } catch (saveError) {
+          console.error(`Failed to save check result for URL ${u.id}:`, saveError)
+        }
       }
-      setBrowserResults((prev) => ({ ...prev, [u.id]: results[u.id] }))
     }
-    setBrowserChecking(false)
+    
+    setChecking(false)
+    // Refresh URLs to show updated status
+    fetchUrls()
   }
 
   const handleLogout = async () => {
@@ -250,27 +296,42 @@ export default function AdminDashboard() {
     }
   }
 
-  const handleCheckAll = async () => {
-    setChecking(true)
+  const handleEditUrl = (url: UrlWithStatus) => {
+    setEditingUrl(url)
+    setEditUrl(url.url)
+    setEditName(url.name)
+    setShowEditDialog(true)
+  }
+
+  const handleUpdateUrl = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingUrl) return
+    
+    setUpdating(true)
+
     try {
-      const res = await fetch("/api/check", {
-        method: "POST",
+      const res = await fetch(`/api/urls/${editingUrl.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: editUrl, name: editName }),
       })
 
       if (!res.ok) {
-        alert("Failed to check URLs")
+        const error = await res.json()
+        alert(error.error || "Failed to update URL")
         return
       }
 
-      // Wait a bit for checks to complete, then refresh
-      setTimeout(() => {
-        fetchUrls()
-        setChecking(false)
-      }, 3000)
+      setShowEditDialog(false)
+      setEditingUrl(null)
+      setEditUrl("")
+      setEditName("")
+      fetchUrls()
     } catch (error) {
-      console.error("Error checking URLs:", error)
-      alert("Failed to check URLs")
-      setChecking(false)
+      console.error("Error updating URL:", error)
+      alert("Failed to update URL")
+    } finally {
+      setUpdating(false)
     }
   }
 
@@ -338,6 +399,22 @@ export default function AdminDashboard() {
     }
   }
 
+  const getOverallStatus = () => {
+    const downCount = urls.filter((url) => {
+      // Consider down if latest_status is null or is_up is false
+      return !url.latest_status || !url.latest_status.is_up
+    }).length
+    if (downCount > 0) {
+      const text = downCount === 1 ? "1 Service Down" : `${downCount} Services Down`
+      return { text, icon: XCircle, color: "bg-red-500/10 text-red-500 border-red-500/20" }
+    }
+    return {
+      text: "All systems operational",
+      icon: CheckCircle2,
+      color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+    }
+  }
+
   if (!authenticated || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -348,6 +425,9 @@ export default function AdminDashboard() {
       </div>
     )
   }
+
+  const overallStatus = getOverallStatus()
+  const StatusIcon = overallStatus.icon
 
   return (
     <div className="min-h-screen bg-background">
@@ -369,6 +449,14 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* Overall Status Banner */}
+        <Card className={`mb-8 border ${overallStatus.color}`}>
+          <CardContent className="flex items-center gap-3 py-6">
+            <StatusIcon className="h-6 w-6" />
+            <span className="text-lg font-semibold">{overallStatus.text}</span>
+          </CardContent>
+        </Card>
+
         {/* Actions */}
         <div className="mb-6 flex flex-wrap gap-4">
           <Button onClick={() => setShowAddDialog(true)}>
@@ -378,20 +466,11 @@ export default function AdminDashboard() {
 
           <Button
             variant="outline"
-            onClick={handleCheckAll}
-            disabled={checking}
+            onClick={runBrowserChecks}
+            disabled={checking || urls.length === 0}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${checking ? "animate-spin" : ""}`} />
             {checking ? "Checking..." : "Check All URLs"}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={runBrowserChecks}
-            disabled={browserChecking || urls.length === 0}
-          >
-            <RefreshCw className={`mr-2 h-4 w-4 ${browserChecking ? "animate-spin" : ""}`} />
-            {browserChecking ? "Running On-campus Check..." : "On-campus Check (browser)"}
           </Button>
 
           <Button
@@ -471,6 +550,51 @@ export default function AdminDashboard() {
               </form>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Edit URL</DialogTitle>
+                <DialogDescription>
+                  Update the name and URL for this service.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleUpdateUrl}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-name">Name</Label>
+                    <Input
+                      id="edit-name"
+                      type="text"
+                      placeholder="e.g., Banner Self Service 8 Production"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-url">URL</Label>
+                    <Input
+                      id="edit-url"
+                      type="url"
+                      placeholder="https://example.com"
+                      value={editUrl}
+                      onChange={(e) => setEditUrl(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={updating}>
+                    {updating ? "Updating..." : "Update URL"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* URLs List */}
@@ -486,102 +610,111 @@ export default function AdminDashboard() {
             </Card>
           ) : (
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {urls.map((url) => (
-                <Card 
-                  key={url.id} 
-                  className="hover:shadow-lg transition-shadow cursor-pointer"
-                  onClick={() => handleUrlClick(url)}
-                >
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <CardTitle className="text-lg mb-1 truncate">{url.name}</CardTitle>
-                        <CardDescription className="break-all text-xs">{url.url}</CardDescription>
+              {urls.map((url) => {
+                const statusBadge = url.latest_status
+                  ? getStatusBadgeForHistory(url.latest_status.is_up ? "up" : "down")
+                  : { text: "UNKNOWN", className: "bg-gray-500 hover:bg-gray-600 text-white" }
+                return (
+                  <Card
+                    key={url.id}
+                    className="border-border hover:shadow-md transition-shadow cursor-pointer"
+                    onClick={() => handleUrlClick(url)}
+                  >
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <CardTitle className="text-lg leading-tight text-balance">
+                            {url.name}
+                          </CardTitle>
+                          <a
+                            href={url.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1.5 block text-sm text-blue-600 hover:text-blue-700 hover:underline break-all"
+                          >
+                            {url.url}
+                          </a>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEditUrl(url)
+                            }}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteId(url.id)
+                              setShowDeleteDialog(true)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteId(url.id)
-                          setShowDeleteDialog(true)
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Status</span>
-                      {getStatusBadge(url.latest_status?.is_up ?? null)}
-                    </div>
-
-                    {url.latest_status && (
-                      <>
-                        {url.latest_status.status_code && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground flex items-center gap-1">
-                              <Activity className="h-3 w-3" />
-                              Status Code
-                            </span>
-                            <Badge variant="secondary">{url.latest_status.status_code}</Badge>
-                          </div>
-                        )}
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            Response Time
-                          </span>
-                          <span className="text-sm font-medium">
-                            {formatResponseTime(url.latest_status.response_time)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">Last Checked</span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatBeaumontDateCompact(url.latest_status.checked_at)}
-                          </span>
-                        </div>
-                      </>
-                    )}
-
-                    <div className="flex items-center justify-between pt-2 border-t">
-                      <span className="text-sm text-muted-foreground">Uptime (7 days)</span>
-                      <span className="text-sm font-semibold">
-                        {url.uptime_percentage.toFixed(1)}%
-                      </span>
-                    </div>
-
-                    {browserResults[url.id] && (
+                    </CardHeader>
+                    <CardContent className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground flex items-center gap-1">
-                          <TrendingUp className="h-3 w-3" />
-                          On-campus (browser)
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <Badge className={`${getStatusBadgeForHistory(browserResults[url.id].status).className}`}>
-                            {getStatusBadgeForHistory(browserResults[url.id].status).text}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground font-mono">
-                            {browserResults[url.id].responseTimeMs !== null ? `${browserResults[url.id].responseTimeMs}ms` : "N/A"}
-                          </span>
+                        <span className="text-sm text-muted-foreground">Status</span>
+                        <Badge className={statusBadge.className}>{statusBadge.text}</Badge>
+                      </div>
+                      {url.latest_status && (
+                        <>
+                          {url.latest_status.status_code && (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Activity className="h-4 w-4" />
+                                <span>Status Code</span>
+                              </div>
+                              <span className="font-mono text-sm font-medium">{url.latest_status.status_code}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Clock className="h-4 w-4" />
+                              <span>Response Time</span>
+                            </div>
+                            <span className="font-mono text-sm font-medium">
+                              {formatResponseTime(url.latest_status.response_time)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Last Checked</span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatBeaumontDateCompact(url.latest_status.checked_at)}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <TrendingUp className="h-4 w-4" />
+                          <span>Uptime (7 days)</span>
                         </div>
+                        <span className="font-mono text-sm font-medium">{url.uptime_percentage.toFixed(1)}%</span>
                       </div>
-                    )}
-
-                    {url.latest_status?.error_message && (
-                      <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                        <p className="text-xs text-destructive flex items-start gap-2">
-                          <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                          {url.latest_status.error_message}
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                      {url.latest_status?.error_message && (
+                        <Alert className="bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-900/50">
+                          <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                          <AlertDescription className="text-sm text-red-800 dark:text-red-300">
+                            {url.latest_status.error_message}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </div>
           )}
         </div>

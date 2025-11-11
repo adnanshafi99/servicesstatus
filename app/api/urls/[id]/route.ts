@@ -80,3 +80,67 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const id = parseInt(params.id);
+    
+    if (isNaN(id)) {
+      return NextResponse.json({ error: 'Invalid ID' }, { status: 400 });
+    }
+
+    const body = await request.json();
+    const { url, name } = body;
+
+    if (!url || !name) {
+      return NextResponse.json(
+        { error: 'URL and name are required' },
+        { status: 400 }
+      );
+    }
+
+    // Validate URL
+    try {
+      new URL(url);
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid URL format' },
+        { status: 400 }
+      );
+    }
+
+    // Check if URL exists
+    const urlResult = await db.execute({
+      sql: 'SELECT * FROM urls WHERE id = ?',
+      args: [id],
+    });
+
+    if (urlResult.rows.length === 0) {
+      return NextResponse.json({ error: 'URL not found' }, { status: 404 });
+    }
+
+    // Update the URL
+    await db.execute({
+      sql: 'UPDATE urls SET url = ?, name = ?, updated_at = datetime("now") WHERE id = ?',
+      args: [url, name, id],
+    });
+
+    return NextResponse.json({
+      id,
+      url,
+      name,
+      message: 'URL updated successfully',
+    });
+  } catch (error: any) {
+    if (error.message?.includes('UNIQUE constraint')) {
+      return NextResponse.json(
+        { error: 'URL already exists' },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

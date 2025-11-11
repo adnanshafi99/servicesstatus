@@ -52,6 +52,8 @@ export default function AdminDashboard() {
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [browserChecking, setBrowserChecking] = useState(false)
+  const [browserResults, setBrowserResults] = useState<Record<number, { status: ServiceStatus; responseTimeMs: number | null; via: "img" | "iframe" | "timeout" | "error" }>>({})
 
   // Form state
   const [newUrl, setNewUrl] = useState("")
@@ -87,6 +89,101 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Client-side, on-campus check using resource loading (no CORS)
+  const runBrowserChecks = async () => {
+    if (urls.length === 0) return
+    setBrowserChecking(true)
+    setBrowserResults({})
+    const timeoutMs = 6000
+
+    // Helper: probe via <img> to favicon (best-effort)
+    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const img = new Image()
+        const url = new URL(targetUrl)
+        // Try to hit a lightweight asset; default to /favicon.ico
+        const bust = `__cb=${Date.now()}`
+        const candidatePath = url.pathname === "/" ? "/favicon.ico" : url.pathname
+        img.src = `${url.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        img.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        img.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+      })
+    }
+
+    // Helper: probe via <iframe> fallback
+    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const iframe = document.createElement("iframe")
+        iframe.style.display = "none"
+        iframe.referrerPolicy = "no-referrer"
+        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
+        iframe.src = bustUrl
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          try {
+            document.body.removeChild(iframe)
+          } catch {}
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        iframe.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        iframe.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+        document.body.appendChild(iframe)
+      })
+    }
+
+    // Run checks sequentially to avoid overwhelming network; could be parallel if desired
+    const results: Record<number, { status: ServiceStatus; responseTimeMs: number | null; via: "img" | "iframe" | "timeout" | "error" }> = {}
+    for (const u of urls) {
+      try {
+        // First try image
+        const imgRes = await probeWithImage(u.url)
+        if (imgRes.ok) {
+          results[u.id] = { status: "up", responseTimeMs: imgRes.ms, via: "img" }
+        } else {
+          // Fallback to iframe
+          const ifRes = await probeWithIframe(u.url)
+          if (ifRes.ok) {
+            results[u.id] = { status: "up", responseTimeMs: ifRes.ms, via: "iframe" }
+          } else {
+            results[u.id] = { status: "down", responseTimeMs: null, via: "timeout" }
+          }
+        }
+      } catch {
+        results[u.id] = { status: "down", responseTimeMs: null, via: "error" }
+      }
+      setBrowserResults((prev) => ({ ...prev, [u.id]: results[u.id] }))
+    }
+    setBrowserChecking(false)
   }
 
   const handleLogout = async () => {
@@ -290,6 +387,15 @@ export default function AdminDashboard() {
 
           <Button
             variant="outline"
+            onClick={runBrowserChecks}
+            disabled={browserChecking || urls.length === 0}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${browserChecking ? "animate-spin" : ""}`} />
+            {browserChecking ? "Running On-campus Check..." : "On-campus Check (browser)"}
+          </Button>
+
+          <Button
+            variant="outline"
             onClick={async () => {
               setExporting(true)
               try {
@@ -447,6 +553,23 @@ export default function AdminDashboard() {
                         {url.uptime_percentage.toFixed(1)}%
                       </span>
                     </div>
+
+                    {browserResults[url.id] && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3" />
+                          On-campus (browser)
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Badge className={`${getStatusBadgeForHistory(browserResults[url.id].status).className}`}>
+                            {getStatusBadgeForHistory(browserResults[url.id].status).text}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {browserResults[url.id].responseTimeMs !== null ? `${browserResults[url.id].responseTimeMs}ms` : "N/A"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {url.latest_status?.error_message && (
                       <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md">

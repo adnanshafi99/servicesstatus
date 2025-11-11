@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import type { UrlWithStatus } from "@/lib/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { CheckCircle2, XCircle, AlertCircle, Activity, Clock, TrendingUp } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -34,6 +35,7 @@ interface Service {
 export default function ServiceStatusDashboard() {
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
+  const [environment, setEnvironment] = useState<"testing" | "production">("testing")
   const [selectedService, setSelectedService] = useState<Service | null>(null)
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
@@ -43,11 +45,11 @@ export default function ServiceStatusDashboard() {
     // Refresh every 30 seconds
     const interval = setInterval(fetchServices, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [environment])
 
   const fetchServices = async () => {
     try {
-      const response = await fetch("/api/urls")
+      const response = await fetch(`/api/urls?environment=${environment}`)
       const data: UrlWithStatus[] = await response.json()
       
       // Transform data to match Service interface
@@ -156,11 +158,22 @@ export default function ServiceStatusDashboard() {
           <p className="mt-2 text-muted-foreground">Real-time status and updates for our systems</p>
         </div>
 
+        {/* Environment Tabs */}
+        <Tabs value={environment} onValueChange={(value) => setEnvironment(value as "testing" | "production")} className="mb-6">
+          <TabsList>
+            <TabsTrigger value="testing">Testing</TabsTrigger>
+            <TabsTrigger value="production">Production</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         {/* Overall Status Banner */}
         <Card className={`mb-8 border ${overallStatus.color}`}>
           <CardContent className="flex items-center gap-3 py-6">
             <StatusIcon className="h-6 w-6" />
             <span className="text-lg font-semibold">{overallStatus.text}</span>
+            <Badge variant="outline" className="ml-auto">
+              {environment === "production" ? "Production" : "Testing"}
+            </Badge>
           </CardContent>
         </Card>
 

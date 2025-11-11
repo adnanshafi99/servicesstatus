@@ -61,6 +61,7 @@ export async function checkUrl(urlId: number): Promise<void> {
       id: Number(row.id),
       url: row.url as string,
       name: row.name as string,
+      environment: (row.environment as "testing" | "production") || "testing",
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
     };
@@ -99,6 +100,7 @@ export async function checkAllUrls(): Promise<void> {
         id: Number(row.id),
         url: row.url as string,
         name: row.name as string,
+        environment: (row.environment as "testing" | "production") || "testing",
         created_at: row.created_at as string,
         updated_at: row.updated_at as string,
       };

@@ -20,10 +20,46 @@ export async function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
+      environment TEXT NOT NULL DEFAULT 'testing',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add environment column if it doesn't exist (migration for existing databases)
+  // SQLite doesn't support adding NOT NULL columns with default values directly
+  // So we check if column exists first by querying table info, and if not, add it
+  try {
+    // Try to get table info to check if environment column exists
+    // For Turso (remote SQLite), PRAGMA might not work, so we'll use a try-catch approach
+    try {
+      const tableInfo = await db.execute("PRAGMA table_info(urls)");
+      const hasEnvironmentColumn = tableInfo.rows.some((row: any) => row.name === 'environment');
+      
+      if (!hasEnvironmentColumn) {
+        // Add column as nullable first
+        await db.execute(`ALTER TABLE urls ADD COLUMN environment TEXT`);
+        // Update all existing rows to 'testing'
+        await db.execute(`UPDATE urls SET environment = 'testing' WHERE environment IS NULL`);
+      }
+    } catch (pragmaError: any) {
+      // PRAGMA might not work with remote databases, try to add column directly
+      try {
+        await db.execute(`ALTER TABLE urls ADD COLUMN environment TEXT`);
+        await db.execute(`UPDATE urls SET environment = 'testing' WHERE environment IS NULL`);
+      } catch (addError: any) {
+        // Column might already exist, which is fine
+        if (!addError.message?.includes('duplicate column') && 
+            !addError.message?.includes('no such column') &&
+            !addError.message?.includes('no such table')) {
+          console.error('Error adding environment column:', addError.message);
+        }
+      }
+    }
+  } catch (error: any) {
+    // Ignore migration errors - column might already exist
+    // This is safe because the CREATE TABLE IF NOT EXISTS already includes the column
+  }
 
   // URL status table - stores check results for each URL
   await db.execute(`

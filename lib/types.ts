@@ -2,6 +2,7 @@ export interface Url {
   id: number;
   url: string;
   name: string;
+  environment: "testing" | "production";
   created_at: string;
   updated_at: string;
 }

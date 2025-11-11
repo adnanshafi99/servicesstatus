@@ -71,6 +71,7 @@ export async function GET(
         id: Number(url.id),
         url: url.url,
         name: url.name,
+        environment: url.environment || 'testing',
         created_at: url.created_at,
         updated_at: url.updated_at,
       },
@@ -93,7 +94,7 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { url, name } = body;
+    const { url, name, environment } = body;
 
     if (!url || !name) {
       return NextResponse.json(
@@ -101,6 +102,9 @@ export async function PUT(
         { status: 400 }
       );
     }
+
+    // Validate environment
+    const validEnvironment = environment === 'production' ? 'production' : 'testing';
 
     // Validate URL
     try {
@@ -124,14 +128,15 @@ export async function PUT(
 
     // Update the URL
     await db.execute({
-      sql: 'UPDATE urls SET url = ?, name = ?, updated_at = datetime("now") WHERE id = ?',
-      args: [url, name, id],
+      sql: 'UPDATE urls SET url = ?, name = ?, environment = ?, updated_at = datetime("now") WHERE id = ?',
+      args: [url, name, validEnvironment, id],
     });
 
     return NextResponse.json({
       id,
       url,
       name,
+      environment: validEnvironment,
       message: 'URL updated successfully',
     });
   } catch (error: any) {

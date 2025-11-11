@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Plus, Trash2, LogOut, RefreshCw, CheckCircle2, XCircle, Globe, Activity, Clock, AlertCircle, TrendingUp, Edit } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { UrlWithStatus } from "@/lib/types"
@@ -45,6 +46,7 @@ export default function AdminDashboard() {
   const [urls, setUrls] = useState<UrlWithStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [authenticated, setAuthenticated] = useState(false)
+  const [environment, setEnvironment] = useState<"testing" | "production">("testing")
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
@@ -61,6 +63,7 @@ export default function AdminDashboard() {
   const [newName, setNewName] = useState("")
   const [editUrl, setEditUrl] = useState("")
   const [editName, setEditName] = useState("")
+  const [editEnvironment, setEditEnvironment] = useState<"testing" | "production">("testing")
   const [submitting, setSubmitting] = useState(false)
   const [updating, setUpdating] = useState(false)
 
@@ -68,13 +71,18 @@ export default function AdminDashboard() {
     checkAuth()
   }, [])
 
+  useEffect(() => {
+    if (authenticated) {
+      fetchUrls()
+    }
+  }, [environment, authenticated])
+
   const checkAuth = async () => {
     try {
       const res = await fetch("/api/auth/session")
       const data = await res.json()
       if (data.authenticated) {
         setAuthenticated(true)
-        fetchUrls()
       } else {
         router.push("/login")
       }
@@ -85,11 +93,18 @@ export default function AdminDashboard() {
 
   const fetchUrls = async () => {
     try {
-      const res = await fetch("/api/urls")
+      const res = await fetch(`/api/urls?environment=${environment}`)
       const data = await res.json()
-      setUrls(data)
+      // Ensure data is an array
+      if (Array.isArray(data)) {
+        setUrls(data)
+      } else {
+        console.error("API did not return an array:", data)
+        setUrls([])
+      }
     } catch (error) {
       console.error("Error fetching URLs:", error)
+      setUrls([])
     } finally {
       setLoading(false)
     }
@@ -97,7 +112,7 @@ export default function AdminDashboard() {
 
   // Client-side, on-campus check using resource loading (no CORS)
   const runBrowserChecks = async () => {
-    if (urls.length === 0) return
+    if (!Array.isArray(urls) || urls.length === 0) return
     setChecking(true)
     const timeoutMs = 6000
 
@@ -165,7 +180,10 @@ export default function AdminDashboard() {
     }
 
     // Run checks sequentially and save results to database
-    for (const u of urls) {
+    // Get all URLs for the current environment
+    const currentUrls = Array.isArray(urls) ? urls.filter(u => u.environment === environment) : []
+    
+    for (const u of currentUrls) {
       try {
         let isUp = false
         let responseTime: number | null = null
@@ -249,7 +267,7 @@ export default function AdminDashboard() {
       const res = await fetch("/api/urls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: newUrl, name: newName }),
+        body: JSON.stringify({ url: newUrl, name: newName, environment: environment }),
       })
 
       if (!res.ok) {
@@ -300,6 +318,7 @@ export default function AdminDashboard() {
     setEditingUrl(url)
     setEditUrl(url.url)
     setEditName(url.name)
+    setEditEnvironment(url.environment)
     setShowEditDialog(true)
   }
 
@@ -313,7 +332,7 @@ export default function AdminDashboard() {
       const res = await fetch(`/api/urls/${editingUrl.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: editUrl, name: editName }),
+        body: JSON.stringify({ url: editUrl, name: editName, environment: editEnvironment }),
       })
 
       if (!res.ok) {
@@ -326,6 +345,7 @@ export default function AdminDashboard() {
       setEditingUrl(null)
       setEditUrl("")
       setEditName("")
+      setEditEnvironment("testing")
       fetchUrls()
     } catch (error) {
       console.error("Error updating URL:", error)
@@ -400,7 +420,18 @@ export default function AdminDashboard() {
   }
 
   const getOverallStatus = () => {
-    const downCount = urls.filter((url) => {
+    // Ensure urls is an array
+    if (!Array.isArray(urls)) {
+      return {
+        text: "All systems operational",
+        icon: CheckCircle2,
+        color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+      }
+    }
+    
+    // Filter URLs by current environment
+    const environmentUrls = urls.filter(url => url.environment === environment)
+    const downCount = environmentUrls.filter((url) => {
       // Consider down if latest_status is null or is_up is false
       return !url.latest_status || !url.latest_status.is_up
     }).length
@@ -449,11 +480,22 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* Environment Tabs */}
+        <Tabs value={environment} onValueChange={(value) => setEnvironment(value as "testing" | "production")} className="mb-6">
+          <TabsList>
+            <TabsTrigger value="testing">Testing</TabsTrigger>
+            <TabsTrigger value="production">Production</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         {/* Overall Status Banner */}
         <Card className={`mb-8 border ${overallStatus.color}`}>
           <CardContent className="flex items-center gap-3 py-6">
             <StatusIcon className="h-6 w-6" />
             <span className="text-lg font-semibold">{overallStatus.text}</span>
+            <Badge variant="outline" className="ml-auto">
+              {environment === "production" ? "Production" : "Testing"}
+            </Badge>
           </CardContent>
         </Card>
 
@@ -467,7 +509,7 @@ export default function AdminDashboard() {
           <Button
             variant="outline"
             onClick={runBrowserChecks}
-            disabled={checking || urls.length === 0}
+            disabled={checking || !Array.isArray(urls) || urls.length === 0}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${checking ? "animate-spin" : ""}`} />
             {checking ? "Checking..." : "Check All URLs"}
@@ -538,6 +580,17 @@ export default function AdminDashboard() {
                       required
                     />
                   </div>
+                  <div className="grid gap-2">
+                    <Label>Environment</Label>
+                    <div className="px-3 py-2 border rounded-md bg-muted flex items-center">
+                      <Badge variant="outline" className="text-sm">
+                        {environment === "production" ? "Production" : "Testing"}
+                      </Badge>
+                      <span className="ml-2 text-sm text-muted-foreground">
+                        (Based on current tab)
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setShowAddDialog(false)}>
@@ -583,6 +636,17 @@ export default function AdminDashboard() {
                       required
                     />
                   </div>
+                  <div className="grid gap-2">
+                    <Label>Environment</Label>
+                    <div className="px-3 py-2 border rounded-md bg-muted flex items-center">
+                      <Badge variant="outline" className="text-sm">
+                        {editEnvironment === "production" ? "Production" : "Testing"}
+                      </Badge>
+                      <span className="ml-2 text-sm text-muted-foreground">
+                        (Cannot be changed)
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
@@ -599,7 +663,7 @@ export default function AdminDashboard() {
 
         {/* URLs List */}
         <div className="space-y-4">
-          {urls.length === 0 ? (
+          {!Array.isArray(urls) || urls.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <Globe className="h-12 w-12 text-muted-foreground mb-4" />

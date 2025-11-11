@@ -2,10 +2,30 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, initDatabase } from '@/lib/db';
 import { checkUrl } from '@/lib/ping';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Get all URLs
-    const urlsResult = await db.execute('SELECT * FROM urls ORDER BY created_at DESC');
+    // Ensure database is initialized
+    await initDatabase();
+    
+    // Get environment filter from query params
+    const { searchParams } = new URL(request.url);
+    const environment = searchParams.get('environment');
+    
+    // Build query with optional environment filter
+    let query = 'SELECT * FROM urls';
+    const args: any[] = [];
+    
+    if (environment && (environment === 'testing' || environment === 'production')) {
+      query += ' WHERE environment = ?';
+      args.push(environment);
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const urlsResult = await db.execute({
+      sql: query,
+      args,
+    });
     
     // Get latest status for each URL and calculate uptime
     const urls = await Promise.all(
@@ -55,6 +75,7 @@ export async function GET() {
           id: Number(row.id),
           url: row.url,
           name: row.name,
+          environment: row.environment || 'testing',
           created_at: row.created_at,
           updated_at: row.updated_at,
           latest_status,
@@ -74,7 +95,7 @@ export async function POST(request: NextRequest) {
     await initDatabase();
     
     const body = await request.json();
-    const { url, name } = body;
+    const { url, name, environment } = body;
 
     if (!url || !name) {
       return NextResponse.json(
@@ -82,6 +103,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Validate environment
+    const validEnvironment = environment === 'production' ? 'production' : 'testing';
 
     // Validate URL
     try {
@@ -94,8 +118,8 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await db.execute({
-      sql: 'INSERT INTO urls (url, name) VALUES (?, ?)',
-      args: [url, name],
+      sql: 'INSERT INTO urls (url, name, environment) VALUES (?, ?, ?)',
+      args: [url, name, validEnvironment],
     });
 
     const newUrlId = Number(result.lastInsertRowid);
@@ -112,6 +136,7 @@ export async function POST(request: NextRequest) {
       id: newUrlId,
       url,
       name,
+      environment: validEnvironment,
       message: 'URL added successfully',
     });
   } catch (error: any) {

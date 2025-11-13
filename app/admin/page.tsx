@@ -57,6 +57,7 @@ export default function AdminDashboard() {
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [refreshingUrlId, setRefreshingUrlId] = useState<number | null>(null)
 
   // Form state
   const [newUrl, setNewUrl] = useState("")
@@ -248,6 +249,138 @@ export default function AdminDashboard() {
     setChecking(false)
     // Refresh URLs to show updated status
     fetchUrls()
+  }
+
+  const refreshSingleService = async (url: UrlWithStatus) => {
+    setRefreshingUrlId(url.id)
+    const timeoutMs = 6000
+
+    // Helper: probe via <img> to favicon (best-effort)
+    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const img = new Image()
+        const urlObj = new URL(targetUrl)
+        // Try to hit a lightweight asset; default to /favicon.ico
+        const bust = `__cb=${Date.now()}`
+        const candidatePath = urlObj.pathname === "/" ? "/favicon.ico" : urlObj.pathname
+        img.src = `${urlObj.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        img.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        img.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+      })
+    }
+
+    // Helper: probe via <iframe> fallback
+    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const iframe = document.createElement("iframe")
+        iframe.style.display = "none"
+        iframe.referrerPolicy = "no-referrer"
+        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
+        iframe.src = bustUrl
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          try {
+            document.body.removeChild(iframe)
+          } catch {}
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        iframe.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        iframe.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+        document.body.appendChild(iframe)
+      })
+    }
+
+    try {
+      let isUp = false
+      let responseTime: number | null = null
+      let statusCode: number | null = null
+      let errorMessage: string | null = null
+
+      // First try image
+      const imgRes = await probeWithImage(url.url)
+      if (imgRes.ok) {
+        isUp = true
+        responseTime = imgRes.ms
+        statusCode = 200 // Image loaded successfully
+      } else {
+        // Fallback to iframe
+        const ifRes = await probeWithIframe(url.url)
+        if (ifRes.ok) {
+          isUp = true
+          responseTime = ifRes.ms
+          statusCode = 200 // Iframe loaded successfully
+        } else {
+          isUp = false
+          errorMessage = "Timeout or connection failed"
+        }
+      }
+
+      // Save result to database
+      try {
+        await fetch("/api/check/browser", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            urlId: url.id,
+            isUp,
+            responseTime,
+            statusCode,
+            errorMessage,
+          }),
+        })
+      } catch (saveError) {
+        console.error(`Failed to save check result for URL ${url.id}:`, saveError)
+      }
+    } catch (error: any) {
+      // Save error result to database
+      try {
+        await fetch("/api/check/browser", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            urlId: url.id,
+            isUp: false,
+            responseTime: null,
+            statusCode: null,
+            errorMessage: error.message || "Unknown error",
+          }),
+        })
+      } catch (saveError) {
+        console.error(`Failed to save check result for URL ${url.id}:`, saveError)
+      }
+    } finally {
+      setRefreshingUrlId(null)
+      // Refresh URLs to show updated status
+      fetchUrls()
+    }
   }
 
   const handleLogout = async () => {
@@ -707,8 +840,22 @@ export default function AdminDashboard() {
                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
                             onClick={(e) => {
                               e.stopPropagation()
+                              refreshSingleService(url)
+                            }}
+                            disabled={refreshingUrlId === url.id}
+                            title="Refresh service status"
+                          >
+                            <RefreshCw className={`h-4 w-4 ${refreshingUrlId === url.id ? "animate-spin" : ""}`} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            onClick={(e) => {
+                              e.stopPropagation()
                               handleEditUrl(url)
                             }}
+                            title="Edit service"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -721,6 +868,7 @@ export default function AdminDashboard() {
                               setDeleteId(url.id)
                               setShowDeleteDialog(true)
                             }}
+                            title="Delete service"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

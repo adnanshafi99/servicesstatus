@@ -4,32 +4,60 @@ import type { Url } from './types';
 export async function pingUrl(urlObj: Url): Promise<{
   status_code: number | null;
   status_text: string | null;
-  response_time: number | null;
+  response_time_ms: number;
   is_up: boolean;
+  is_redirect: boolean;
+  location: string | null;
+  checked_at: string;
   error_message: string | null;
 }> {
   const startTime = Date.now();
+  const checkedAt = new Date().toISOString();
   
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-    const response = await fetch(urlObj.url, {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'URL-Monitor/1.0',
-      },
-    });
+    // Try HEAD first, fallback to GET if HEAD fails
+    let response: Response;
+    try {
+      response = await fetch(urlObj.url, {
+        method: 'HEAD',
+        signal: controller.signal,
+        redirect: 'manual', // Don't follow redirects automatically
+        headers: {
+          'User-Agent': 'URL-Monitor/1.0',
+        },
+      });
+    } catch (headError) {
+      // Fallback to GET if HEAD fails or is unsupported
+      response = await fetch(urlObj.url, {
+        method: 'GET',
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          'User-Agent': 'URL-Monitor/1.0',
+        },
+      });
+    }
 
     clearTimeout(timeoutId);
     const responseTime = Date.now() - startTime;
 
+    const status = response.status;
+    const isRedirect = [301, 302, 303, 307, 308].includes(status);
+    // Treat 2xx and 3xx (including 301/302) as "up"
+    const isUp = status >= 200 && status < 400;
+    const location = response.headers.get('location');
+
     return {
-      status_code: response.status,
+      status_code: status,
       status_text: response.statusText,
-      response_time: responseTime,
-      is_up: response.ok,
+      response_time_ms: responseTime,
+      is_up: isUp,
+      is_redirect: isRedirect,
+      location: location,
+      checked_at: checkedAt,
       error_message: null,
     };
   } catch (error: any) {
@@ -38,14 +66,26 @@ export async function pingUrl(urlObj: Url): Promise<{
     return {
       status_code: null,
       status_text: null,
-      response_time: responseTime,
+      response_time_ms: responseTime,
       is_up: false,
-      error_message: error.message || 'Unknown error',
+      is_redirect: false,
+      location: null,
+      checked_at: checkedAt,
+      error_message: error.message || 'Timeout or network error',
     };
   }
 }
 
-export async function checkUrl(urlId: number): Promise<void> {
+export async function checkUrl(urlId: number): Promise<{
+  status_code: number | null;
+  status_text: string | null;
+  response_time_ms: number;
+  is_up: boolean;
+  is_redirect: boolean;
+  location: string | null;
+  checked_at: string;
+  error_message: string | null;
+}> {
   try {
     const urlResult = await db.execute({
       sql: 'SELECT * FROM urls WHERE id = ?',
@@ -70,25 +110,40 @@ export async function checkUrl(urlId: number): Promise<void> {
     
     await db.execute({
       sql: `
-        INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         urlObj.id,
         result.status_code,
         result.status_text,
-        result.response_time,
+        result.response_time_ms,
         result.is_up ? 1 : 0,
         result.error_message,
+        result.location,
+        result.checked_at,
       ],
     });
+
+    return result;
   } catch (error) {
     console.error(`Error checking URL ${urlId}:`, error);
     throw error;
   }
 }
 
-export async function checkAllUrls(): Promise<void> {
+export async function checkAllUrls(): Promise<Array<{
+  urlId: number;
+  status_code: number | null;
+  status_text: string | null;
+  response_time_ms: number;
+  is_up: boolean;
+  is_redirect: boolean;
+  location: string | null;
+  checked_at: string;
+  error_message: string | null;
+}>> {
+  const results = [];
   try {
     const urls = await db.execute({
       sql: 'SELECT * FROM urls',
@@ -109,19 +164,27 @@ export async function checkAllUrls(): Promise<void> {
       
       await db.execute({
         sql: `
-          INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
         args: [
           urlObj.id,
           result.status_code,
           result.status_text,
-          result.response_time,
+          result.response_time_ms,
           result.is_up ? 1 : 0,
           result.error_message,
+          result.location,
+          result.checked_at,
         ],
       });
+
+      results.push({
+        urlId: urlObj.id,
+        ...result,
+      });
     }
+    return results;
   } catch (error) {
     console.error('Error checking URLs:', error);
     throw error;

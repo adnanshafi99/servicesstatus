@@ -3,10 +3,11 @@ import { checkAllUrls } from '@/lib/ping';
 
 export async function POST() {
   try {
-    await checkAllUrls();
+    const results = await checkAllUrls();
     return NextResponse.json({ 
       success: true, 
-      message: 'All URLs checked successfully' 
+      message: 'All URLs checked successfully',
+      results 
     });
   } catch (error: any) {
     return NextResponse.json({ 

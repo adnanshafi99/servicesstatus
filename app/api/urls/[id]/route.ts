@@ -64,6 +64,8 @@ export async function GET(
       is_up: Boolean(row.is_up),
       checked_at: row.checked_at,
       error_message: row.error_message,
+      location: row.location || null,
+      is_redirect: row.status_code ? [301, 302, 303, 307, 308].includes(Number(row.status_code)) : false,
     }));
 
     return NextResponse.json({

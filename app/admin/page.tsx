@@ -111,275 +111,60 @@ export default function AdminDashboard() {
     }
   }
 
-  // Client-side, on-campus check using resource loading (no CORS)
+  // Server-side check using Node.js API (no CORS, proper status codes)
   const runBrowserChecks = async () => {
     if (!Array.isArray(urls) || urls.length === 0) return
     setChecking(true)
-    const timeoutMs = 6000
-
-    // Helper: probe via <img> to favicon (best-effort)
-    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const img = new Image()
-        const url = new URL(targetUrl)
-        // Try to hit a lightweight asset; default to /favicon.ico
-        const bust = `__cb=${Date.now()}`
-        const candidatePath = url.pathname === "/" ? "/favicon.ico" : url.pathname
-        img.src = `${url.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        img.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        img.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-      })
-    }
-
-    // Helper: probe via <iframe> fallback
-    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const iframe = document.createElement("iframe")
-        iframe.style.display = "none"
-        iframe.referrerPolicy = "no-referrer"
-        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
-        iframe.src = bustUrl
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          try {
-            document.body.removeChild(iframe)
-          } catch {}
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        iframe.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        iframe.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-        document.body.appendChild(iframe)
-      })
-    }
-
-    // Run checks sequentially and save results to database
-    // Get all URLs for the current environment
-    const currentUrls = Array.isArray(urls) ? urls.filter(u => u.environment === environment) : []
-    
-    for (const u of currentUrls) {
-      try {
-        let isUp = false
-        let responseTime: number | null = null
-        let statusCode: number | null = null
-        let errorMessage: string | null = null
-
-        // First try image
-        const imgRes = await probeWithImage(u.url)
-        if (imgRes.ok) {
-          isUp = true
-          responseTime = imgRes.ms
-          statusCode = 200 // Image loaded successfully
-        } else {
-          // Fallback to iframe
-          const ifRes = await probeWithIframe(u.url)
-          if (ifRes.ok) {
-            isUp = true
-            responseTime = ifRes.ms
-            statusCode = 200 // Iframe loaded successfully
-          } else {
-            isUp = false
-            errorMessage = "Timeout or connection failed"
-          }
-        }
-
-        // Save result to database
-        try {
-          await fetch("/api/check/browser", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              urlId: u.id,
-              isUp,
-              responseTime,
-              statusCode,
-              errorMessage,
-            }),
-          })
-        } catch (saveError) {
-          console.error(`Failed to save check result for URL ${u.id}:`, saveError)
-        }
-      } catch (error: any) {
-        // Save error result to database
-        try {
-          await fetch("/api/check/browser", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              urlId: u.id,
-              isUp: false,
-              responseTime: null,
-              statusCode: null,
-              errorMessage: error.message || "Unknown error",
-            }),
-          })
-        } catch (saveError) {
-          console.error(`Failed to save check result for URL ${u.id}:`, saveError)
-        }
-      }
-    }
-    
-    setChecking(false)
-    // Refresh URLs to show updated status
-    fetchUrls()
-  }
-
-  const refreshSingleService = async (url: UrlWithStatus) => {
-    setRefreshingUrlId(url.id)
-    const timeoutMs = 6000
-
-    // Helper: probe via <img> to favicon (best-effort)
-    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const img = new Image()
-        const urlObj = new URL(targetUrl)
-        // Try to hit a lightweight asset; default to /favicon.ico
-        const bust = `__cb=${Date.now()}`
-        const candidatePath = urlObj.pathname === "/" ? "/favicon.ico" : urlObj.pathname
-        img.src = `${urlObj.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        img.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        img.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-      })
-    }
-
-    // Helper: probe via <iframe> fallback
-    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const iframe = document.createElement("iframe")
-        iframe.style.display = "none"
-        iframe.referrerPolicy = "no-referrer"
-        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
-        iframe.src = bustUrl
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          try {
-            document.body.removeChild(iframe)
-          } catch {}
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        iframe.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        iframe.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-        document.body.appendChild(iframe)
-      })
-    }
 
     try {
-      let isUp = false
-      let responseTime: number | null = null
-      let statusCode: number | null = null
-      let errorMessage: string | null = null
+      const response = await fetch("/api/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
 
-      // First try image
-      const imgRes = await probeWithImage(url.url)
-      if (imgRes.ok) {
-        isUp = true
-        responseTime = imgRes.ms
-        statusCode = 200 // Image loaded successfully
-      } else {
-        // Fallback to iframe
-        const ifRes = await probeWithIframe(url.url)
-        if (ifRes.ok) {
-          isUp = true
-          responseTime = ifRes.ms
-          statusCode = 200 // Iframe loaded successfully
-        } else {
-          isUp = false
-          errorMessage = "Timeout or connection failed"
-        }
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.error || "Failed to check URLs")
+        return
       }
 
-      // Save result to database
-      try {
-        await fetch("/api/check/browser", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            urlId: url.id,
-            isUp,
-            responseTime,
-            statusCode,
-            errorMessage,
-          }),
-        })
-      } catch (saveError) {
-        console.error(`Failed to save check result for URL ${url.id}:`, saveError)
-      }
+      const data = await response.json()
+      // Results are automatically saved to database by the API
+      // Just refresh the URL list to show updated status
+      fetchUrls()
     } catch (error: any) {
-      // Save error result to database
-      try {
-        await fetch("/api/check/browser", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            urlId: url.id,
-            isUp: false,
-            responseTime: null,
-            statusCode: null,
-            errorMessage: error.message || "Unknown error",
-          }),
-        })
-      } catch (saveError) {
-        console.error(`Failed to save check result for URL ${url.id}:`, saveError)
+      console.error("Error checking URLs:", error)
+      alert("Failed to check URLs: " + (error.message || "Unknown error"))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  // Server-side check for single service using Node.js API
+  const refreshSingleService = async (url: UrlWithStatus) => {
+    setRefreshingUrlId(url.id)
+
+    try {
+      const response = await fetch("/api/check/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urlId: url.id }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.error || "Failed to check URL")
+        return
       }
+
+      // Result is automatically saved to database by the API
+      // Just refresh the URL list to show updated status
+      fetchUrls()
+    } catch (error: any) {
+      console.error("Error checking URL:", error)
+      alert("Failed to check URL: " + (error.message || "Unknown error"))
     } finally {
       setRefreshingUrlId(null)
-      // Refresh URLs to show updated status
-      fetchUrls()
     }
   }
 

@@ -52,6 +52,8 @@ export async function GET(request: NextRequest) {
           is_up: Boolean(latestStatusResult.rows[0].is_up),
           checked_at: latestStatusResult.rows[0].checked_at,
           error_message: latestStatusResult.rows[0].error_message,
+          location: latestStatusResult.rows[0].location || null,
+          is_redirect: latestStatusResult.rows[0].status_code ? [301, 302, 303, 307, 308].includes(Number(latestStatusResult.rows[0].status_code)) : false,
         } : null;
         
         // Calculate uptime percentage for last 7 days

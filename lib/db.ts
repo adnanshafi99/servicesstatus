@@ -72,9 +72,36 @@ export async function initDatabase() {
       is_up BOOLEAN NOT NULL,
       checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       error_message TEXT,
+      location TEXT,
       FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE
     )
   `);
+
+  // Add location column if it doesn't exist (migration for existing databases)
+  try {
+    try {
+      const tableInfo = await db.execute("PRAGMA table_info(url_status)");
+      const hasLocationColumn = tableInfo.rows.some((row: any) => row.name === 'location');
+      
+      if (!hasLocationColumn) {
+        await db.execute(`ALTER TABLE url_status ADD COLUMN location TEXT`);
+      }
+    } catch (pragmaError: any) {
+      // PRAGMA might not work with remote databases, try to add column directly
+      try {
+        await db.execute(`ALTER TABLE url_status ADD COLUMN location TEXT`);
+      } catch (addError: any) {
+        // Column might already exist, which is fine
+        if (!addError.message?.includes('duplicate column') && 
+            !addError.message?.includes('no such column') &&
+            !addError.message?.includes('no such table')) {
+          console.error('Error adding location column:', addError.message);
+        }
+      }
+    }
+  } catch (error: any) {
+    // Ignore migration errors - column might already exist
+  }
 
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_url_status_url_id ON url_status(url_id);

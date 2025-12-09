@@ -12,10 +12,12 @@ export interface UrlStatus {
   url_id: number;
   status_code: number | null;
   status_text: string | null;
-  response_time: number | null;
+  response_time: number | null; // Keep for backward compatibility, but new checks use response_time_ms
   is_up: boolean;
   checked_at: string;
   error_message: string | null;
+  location?: string | null; // Redirect location header
+  is_redirect?: boolean; // True if status is 301 or 302
 }
 
 export interface UrlWithStatus extends Url {

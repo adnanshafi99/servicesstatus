@@ -115,90 +115,155 @@ export default function AdminDashboard() {
   const runBrowserCheckForUrl = async (url: UrlWithStatus): Promise<void> => {
     const timeoutMs = 6000
 
-    // Helper: probe via <img> to favicon (best-effort)
-    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const img = new Image()
-        const urlObj = new URL(targetUrl)
-        const bust = `__cb=${Date.now()}`
-        const candidatePath = urlObj.pathname === "/" ? "/favicon.ico" : urlObj.pathname
-        img.src = `${urlObj.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        img.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        img.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-      })
-    }
-
-    // Helper: probe via <iframe> fallback
-    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
-      return new Promise((resolve) => {
-        const start = performance.now()
-        const iframe = document.createElement("iframe")
-        iframe.style.display = "none"
-        iframe.referrerPolicy = "no-referrer"
-        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
-        iframe.src = bustUrl
-
-        let done = false
-        const finish = (ok: boolean) => {
-          if (done) return
-          done = true
-          const ms = Math.round(performance.now() - start)
-          try {
-            document.body.removeChild(iframe)
-          } catch {}
-          resolve({ ok, ms })
-        }
-        const to = window.setTimeout(() => finish(false), timeoutMs)
-        iframe.onload = () => {
-          window.clearTimeout(to)
-          finish(true)
-        }
-        iframe.onerror = () => {
-          window.clearTimeout(to)
-          finish(false)
-        }
-        document.body.appendChild(iframe)
-      })
-    }
-
     try {
       let isUp = false
       let responseTime: number | null = null
       let statusCode: number | null = null
       let errorMessage: string | null = null
 
-      // First try image
-      const imgRes = await probeWithImage(url.url)
-      if (imgRes.ok) {
+      // First, try fetch() which properly detects connection errors like ERR_CONNECTION_RESET
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+        const startTime = performance.now()
+
+        const response = await fetch(url.url, {
+          method: 'HEAD',
+          signal: controller.signal,
+          redirect: 'manual',
+          mode: 'no-cors', // Allows cross-origin but we can't read response status
+        })
+
+        clearTimeout(timeoutId)
+        responseTime = Math.round(performance.now() - startTime)
+        
+        // With no-cors mode, if fetch succeeds, site is reachable
         isUp = true
-        responseTime = imgRes.ms
-        statusCode = 200
-      } else {
-        // Fallback to iframe
-        const ifRes = await probeWithIframe(url.url)
-        if (ifRes.ok) {
+        statusCode = 200 // Best guess with no-cors mode
+      } catch (fetchError: any) {
+        // Fetch failed - check if it's a real connection error
+        const errorMsg = fetchError.message || fetchError.toString() || ''
+        const errorName = fetchError.name || ''
+        
+        // Detect actual connection errors (not CORS)
+        const isConnectionError = 
+          errorMsg.includes('Failed to fetch') ||
+          errorMsg.includes('ERR_CONNECTION_RESET') ||
+          errorMsg.includes('ERR_CONNECTION_REFUSED') ||
+          errorMsg.includes('ERR_CONNECTION_CLOSED') ||
+          errorMsg.includes('ERR_CONNECTION_TIMED_OUT') ||
+          errorMsg.includes('networkerror') ||
+          errorMsg.includes('NetworkError') ||
+          errorName === 'TypeError' ||
+          errorName === 'AbortError'
+
+        if (isConnectionError) {
+          // Real connection error - site is down
+          isUp = false
+          responseTime = null
+          statusCode = null
+          errorMessage = `Connection error: ${errorMsg || errorName || 'Network failure'}`
+          
+          // Save as down and return immediately
+          await fetch("/api/check/browser", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              urlId: url.id,
+              isUp: false,
+              responseTime: null,
+              statusCode: null,
+              errorMessage,
+            }),
+          })
+          return
+        }
+        
+        // If it's not a connection error (likely CORS), fall back to image/iframe
+        // Continue below to image/iframe fallback
+      }
+
+      // Fallback to image/iframe if fetch didn't work (likely CORS issue)
+      if (!isUp && !errorMessage) {
+        // Helper: probe via <img> to favicon
+        const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+          return new Promise((resolve) => {
+            const start = performance.now()
+            const img = new Image()
+            const urlObj = new URL(targetUrl)
+            const bust = `__cb=${Date.now()}`
+            const candidatePath = urlObj.pathname === "/" ? "/favicon.ico" : urlObj.pathname
+            img.src = `${urlObj.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
+
+            let done = false
+            const finish = (ok: boolean) => {
+              if (done) return
+              done = true
+              const ms = Math.round(performance.now() - start)
+              resolve({ ok, ms })
+            }
+            const to = window.setTimeout(() => finish(false), timeoutMs)
+            img.onload = () => {
+              window.clearTimeout(to)
+              finish(true)
+            }
+            img.onerror = () => {
+              window.clearTimeout(to)
+              finish(false)
+            }
+          })
+        }
+
+        // Helper: probe via <iframe> fallback
+        const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+          return new Promise((resolve) => {
+            const start = performance.now()
+            const iframe = document.createElement("iframe")
+            iframe.style.display = "none"
+            iframe.referrerPolicy = "no-referrer"
+            const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
+            iframe.src = bustUrl
+
+            let done = false
+            const finish = (ok: boolean) => {
+              if (done) return
+              done = true
+              const ms = Math.round(performance.now() - start)
+              try {
+                document.body.removeChild(iframe)
+              } catch {}
+              resolve({ ok, ms })
+            }
+            const to = window.setTimeout(() => finish(false), timeoutMs)
+            iframe.onload = () => {
+              window.clearTimeout(to)
+              finish(true)
+            }
+            iframe.onerror = () => {
+              window.clearTimeout(to)
+              finish(false)
+            }
+            document.body.appendChild(iframe)
+          })
+        }
+
+        // Try image first
+        const imgRes = await probeWithImage(url.url)
+        if (imgRes.ok) {
           isUp = true
-          responseTime = ifRes.ms
+          responseTime = imgRes.ms
           statusCode = 200
         } else {
-          isUp = false
-          errorMessage = "Timeout or connection failed"
+          // Fallback to iframe
+          const ifRes = await probeWithIframe(url.url)
+          if (ifRes.ok) {
+            isUp = true
+            responseTime = ifRes.ms
+            statusCode = 200
+          } else {
+            isUp = false
+            errorMessage = "Timeout or connection failed"
+          }
         }
       }
 

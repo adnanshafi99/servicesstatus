@@ -127,19 +127,30 @@ export default function AdminDashboard() {
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
         const startTime = performance.now()
 
-        const response = await fetch(url.url, {
-          method: 'HEAD',
-          signal: controller.signal,
-          redirect: 'manual',
-          mode: 'no-cors', // Allows cross-origin but we can't read response status
-        })
+        // Try with normal mode first (more reliable if CORS allows)
+        let response: Response
+        try {
+          response = await fetch(url.url, {
+            method: 'HEAD',
+            signal: controller.signal,
+            redirect: 'manual',
+          })
+        } catch (corsError) {
+          // If CORS blocks, try with no-cors mode
+          response = await fetch(url.url, {
+            method: 'HEAD',
+            signal: controller.signal,
+            redirect: 'manual',
+            mode: 'no-cors',
+          })
+        }
 
         clearTimeout(timeoutId)
         responseTime = Math.round(performance.now() - startTime)
         
-        // With no-cors mode, if fetch succeeds, site is reachable
+        // If fetch succeeds, site is reachable
         isUp = true
-        statusCode = 200 // Best guess with no-cors mode
+        statusCode = response.status || 200
       } catch (fetchError: any) {
         // Fetch failed - check if it's a REAL connection error (not generic "Failed to fetch")
         const errorMsg = (fetchError.message || fetchError.toString() || '').toLowerCase()
@@ -253,25 +264,24 @@ export default function AdminDashboard() {
           })
         }
 
-        // Try both image and iframe - require BOTH to succeed for more reliability
-        // This prevents false positives where one probe succeeds but site is actually down
+        // Try image first, then iframe as fallback
+        // If either succeeds, site is up (original logic)
         const imgRes = await probeWithImage(url.url)
-        const ifRes = await probeWithIframe(url.url)
-        
-        // Only mark as UP if BOTH succeed (more strict and reliable)
-        if (imgRes.ok && ifRes.ok) {
+        if (imgRes.ok) {
           isUp = true
-          responseTime = Math.min(imgRes.ms, ifRes.ms) // Use faster response time
+          responseTime = imgRes.ms
           statusCode = 200
         } else {
-          // If either fails, site is likely down
-          isUp = false
-          if (!imgRes.ok && !ifRes.ok) {
-            errorMessage = "Connection failed - both image and iframe probes failed"
-          } else if (!imgRes.ok) {
-            errorMessage = "Connection failed - image probe failed"
+          // Fallback to iframe
+          const ifRes = await probeWithIframe(url.url)
+          if (ifRes.ok) {
+            isUp = true
+            responseTime = ifRes.ms
+            statusCode = 200
           } else {
-            errorMessage = "Connection failed - iframe probe failed"
+            // Both failed - site is down
+            isUp = false
+            errorMessage = "Timeout or connection failed"
           }
         }
       }

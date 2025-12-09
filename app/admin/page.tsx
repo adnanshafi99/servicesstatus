@@ -142,19 +142,23 @@ export default function AdminDashboard() {
         statusCode = 200 // Best guess with no-cors mode
       } catch (fetchError: any) {
         // Fetch failed - check if it's a REAL connection error (not generic "Failed to fetch")
-        const errorMsg = fetchError.message || fetchError.toString() || ''
+        const errorMsg = (fetchError.message || fetchError.toString() || '').toLowerCase()
         const errorName = fetchError.name || ''
         
-        // Only treat SPECIFIC connection errors as connection errors
-        // "Failed to fetch" and "TypeError" are too generic - they can be CORS, network, or other issues
-        // We need to verify with image/iframe fallback for these cases
+        // Check error message more thoroughly - ERR_* errors might be in different formats
+        // Also check for plain text variations like "connection reset"
         const isConnectionError = 
-          errorMsg.includes('ERR_CONNECTION_RESET') ||
-          errorMsg.includes('ERR_CONNECTION_REFUSED') ||
-          errorMsg.includes('ERR_CONNECTION_CLOSED') ||
-          errorMsg.includes('ERR_CONNECTION_TIMED_OUT') ||
-          errorMsg.includes('ERR_NAME_NOT_RESOLVED') ||
-          errorMsg.includes('ERR_INTERNET_DISCONNECTED') ||
+          errorMsg.includes('err_connection_reset') ||
+          errorMsg.includes('err_connection_refused') ||
+          errorMsg.includes('err_connection_closed') ||
+          errorMsg.includes('err_connection_timed_out') ||
+          errorMsg.includes('err_name_not_resolved') ||
+          errorMsg.includes('err_internet_disconnected') ||
+          errorMsg.includes('connection reset') ||
+          errorMsg.includes('connection refused') ||
+          errorMsg.includes('connection closed') ||
+          errorMsg.includes('connection timed out') ||
+          errorMsg.includes('took too long to respond') ||
           errorName === 'AbortError' // Timeout is a real connection issue
 
         if (isConnectionError) {
@@ -162,7 +166,7 @@ export default function AdminDashboard() {
           isUp = false
           responseTime = null
           statusCode = null
-          errorMessage = `Connection error: ${errorMsg || errorName || 'Network failure'}`
+          errorMessage = `Connection error: ${fetchError.message || errorName || 'Network failure'}`
           
           // Save as down and return immediately
           await fetch("/api/check/browser", {
@@ -180,7 +184,7 @@ export default function AdminDashboard() {
         }
         
         // If it's not a specific connection error (could be CORS or fetch limitation),
-        // fall back to image/iframe to verify - this will correctly detect if site is up
+        // fall back to image/iframe to verify - but be more strict
         // Continue below to image/iframe fallback
       }
 
@@ -249,22 +253,25 @@ export default function AdminDashboard() {
           })
         }
 
-        // Try image first
+        // Try both image and iframe - require BOTH to succeed for more reliability
+        // This prevents false positives where one probe succeeds but site is actually down
         const imgRes = await probeWithImage(url.url)
-        if (imgRes.ok) {
+        const ifRes = await probeWithIframe(url.url)
+        
+        // Only mark as UP if BOTH succeed (more strict and reliable)
+        if (imgRes.ok && ifRes.ok) {
           isUp = true
-          responseTime = imgRes.ms
+          responseTime = Math.min(imgRes.ms, ifRes.ms) // Use faster response time
           statusCode = 200
         } else {
-          // Fallback to iframe
-          const ifRes = await probeWithIframe(url.url)
-          if (ifRes.ok) {
-            isUp = true
-            responseTime = ifRes.ms
-            statusCode = 200
+          // If either fails, site is likely down
+          isUp = false
+          if (!imgRes.ok && !ifRes.ok) {
+            errorMessage = "Connection failed - both image and iframe probes failed"
+          } else if (!imgRes.ok) {
+            errorMessage = "Connection failed - image probe failed"
           } else {
-            isUp = false
-            errorMessage = "Timeout or connection failed"
+            errorMessage = "Connection failed - iframe probe failed"
           }
         }
       }

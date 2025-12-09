@@ -10,6 +10,7 @@ export async function pingUrl(urlObj: Url): Promise<{
   location: string | null;
   checked_at: string;
   error_message: string | null;
+  needs_browser_fallback?: boolean; // True if network error suggests campus restriction
 }> {
   const startTime = Date.now();
   const checkedAt = new Date().toISOString();
@@ -62,6 +63,26 @@ export async function pingUrl(urlObj: Url): Promise<{
     };
   } catch (error: any) {
     const responseTime = Date.now() - startTime;
+    const errorMessage = error.message || 'Timeout or network error';
+    
+    // Detect network connectivity issues that might indicate campus restrictions
+    // These errors suggest the server can't reach the URL, but browser might be able to
+    const networkErrors = [
+      'fetch failed',
+      'networkerror',
+      'timeout',
+      'aborted',
+      'econnrefused',
+      'enotfound',
+      'etimedout',
+      'socket hang up',
+      'connection refused',
+      'dns',
+    ];
+    
+    const needsBrowserFallback = networkErrors.some(err => 
+      errorMessage.toLowerCase().includes(err.toLowerCase())
+    ) || error.name === 'AbortError' || error.name === 'TypeError';
     
     return {
       status_code: null,
@@ -71,7 +92,8 @@ export async function pingUrl(urlObj: Url): Promise<{
       is_redirect: false,
       location: null,
       checked_at: checkedAt,
-      error_message: error.message || 'Timeout or network error',
+      error_message: errorMessage,
+      needs_browser_fallback: needsBrowserFallback,
     };
   }
 }
@@ -85,6 +107,7 @@ export async function checkUrl(urlId: number): Promise<{
   location: string | null;
   checked_at: string;
   error_message: string | null;
+  needs_browser_fallback?: boolean;
 }> {
   try {
     const urlResult = await db.execute({
@@ -108,22 +131,26 @@ export async function checkUrl(urlId: number): Promise<{
 
     const result = await pingUrl(urlObj);
     
-    await db.execute({
-      sql: `
-        INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        urlObj.id,
-        result.status_code,
-        result.status_text,
-        result.response_time_ms,
-        result.is_up ? 1 : 0,
-        result.error_message,
-        result.location,
-        result.checked_at,
-      ],
-    });
+    // Only save to database if server-side check succeeded
+    // If it needs browser fallback, don't save yet - let browser check save it
+    if (!result.needs_browser_fallback) {
+      await db.execute({
+        sql: `
+          INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          urlObj.id,
+          result.status_code,
+          result.status_text,
+          result.response_time_ms,
+          result.is_up ? 1 : 0,
+          result.error_message,
+          result.location,
+          result.checked_at,
+        ],
+      });
+    }
 
     return result;
   } catch (error) {
@@ -162,22 +189,26 @@ export async function checkAllUrls(): Promise<Array<{
 
       const result = await pingUrl(urlObj);
       
-      await db.execute({
-        sql: `
-          INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        args: [
-          urlObj.id,
-          result.status_code,
-          result.status_text,
-          result.response_time_ms,
-          result.is_up ? 1 : 0,
-          result.error_message,
-          result.location,
-          result.checked_at,
-        ],
-      });
+      // Only save to database if server-side check succeeded
+      // If it needs browser fallback, don't save yet - let browser check save it
+      if (!result.needs_browser_fallback) {
+        await db.execute({
+          sql: `
+            INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          args: [
+            urlObj.id,
+            result.status_code,
+            result.status_text,
+            result.response_time_ms,
+            result.is_up ? 1 : 0,
+            result.error_message,
+            result.location,
+            result.checked_at,
+          ],
+        });
+      }
 
       results.push({
         urlId: urlObj.id,

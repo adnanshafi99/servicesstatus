@@ -111,12 +111,132 @@ export default function AdminDashboard() {
     }
   }
 
-  // Server-side check using Node.js API (no CORS, proper status codes)
+  // Browser-based check helper (fallback for campus-restricted URLs)
+  const runBrowserCheckForUrl = async (url: UrlWithStatus): Promise<void> => {
+    const timeoutMs = 6000
+
+    // Helper: probe via <img> to favicon (best-effort)
+    const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const img = new Image()
+        const urlObj = new URL(targetUrl)
+        const bust = `__cb=${Date.now()}`
+        const candidatePath = urlObj.pathname === "/" ? "/favicon.ico" : urlObj.pathname
+        img.src = `${urlObj.origin}${candidatePath}${candidatePath.includes("?") ? "&" : "?"}${bust}`
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        img.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        img.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+      })
+    }
+
+    // Helper: probe via <iframe> fallback
+    const probeWithIframe = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {
+      return new Promise((resolve) => {
+        const start = performance.now()
+        const iframe = document.createElement("iframe")
+        iframe.style.display = "none"
+        iframe.referrerPolicy = "no-referrer"
+        const bustUrl = targetUrl.includes("?") ? `${targetUrl}&__cb=${Date.now()}` : `${targetUrl}?__cb=${Date.now()}`
+        iframe.src = bustUrl
+
+        let done = false
+        const finish = (ok: boolean) => {
+          if (done) return
+          done = true
+          const ms = Math.round(performance.now() - start)
+          try {
+            document.body.removeChild(iframe)
+          } catch {}
+          resolve({ ok, ms })
+        }
+        const to = window.setTimeout(() => finish(false), timeoutMs)
+        iframe.onload = () => {
+          window.clearTimeout(to)
+          finish(true)
+        }
+        iframe.onerror = () => {
+          window.clearTimeout(to)
+          finish(false)
+        }
+        document.body.appendChild(iframe)
+      })
+    }
+
+    try {
+      let isUp = false
+      let responseTime: number | null = null
+      let statusCode: number | null = null
+      let errorMessage: string | null = null
+
+      // First try image
+      const imgRes = await probeWithImage(url.url)
+      if (imgRes.ok) {
+        isUp = true
+        responseTime = imgRes.ms
+        statusCode = 200
+      } else {
+        // Fallback to iframe
+        const ifRes = await probeWithIframe(url.url)
+        if (ifRes.ok) {
+          isUp = true
+          responseTime = ifRes.ms
+          statusCode = 200
+        } else {
+          isUp = false
+          errorMessage = "Timeout or connection failed"
+        }
+      }
+
+      // Save result to database
+      await fetch("/api/check/browser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urlId: url.id,
+          isUp,
+          responseTime,
+          statusCode,
+          errorMessage,
+        }),
+      })
+    } catch (error: any) {
+      // Save error result to database
+      await fetch("/api/check/browser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urlId: url.id,
+          isUp: false,
+          responseTime: null,
+          statusCode: null,
+          errorMessage: error.message || "Unknown error",
+        }),
+      })
+    }
+  }
+
+  // Hybrid check: Try server-side first, fallback to browser for campus-restricted URLs
   const runBrowserChecks = async () => {
     if (!Array.isArray(urls) || urls.length === 0) return
     setChecking(true)
 
     try {
+      // First, try server-side check for all URLs
       const response = await fetch("/api/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,8 +249,28 @@ export default function AdminDashboard() {
       }
 
       const data = await response.json()
-      // Results are automatically saved to database by the API
-      // Just refresh the URL list to show updated status
+      
+      // Check which URLs need browser fallback
+      const urlsNeedingFallback: UrlWithStatus[] = []
+      if (data.results && Array.isArray(data.results)) {
+        for (const result of data.results) {
+          if (result.needs_browser_fallback) {
+            const url = urls.find(u => u.id === result.urlId)
+            if (url) {
+              urlsNeedingFallback.push(url)
+            }
+          }
+        }
+      }
+
+      // Run browser checks for URLs that need fallback
+      if (urlsNeedingFallback.length > 0) {
+        for (const url of urlsNeedingFallback) {
+          await runBrowserCheckForUrl(url)
+        }
+      }
+
+      // Refresh URLs to show updated status
       fetchUrls()
     } catch (error: any) {
       console.error("Error checking URLs:", error)
@@ -140,11 +280,12 @@ export default function AdminDashboard() {
     }
   }
 
-  // Server-side check for single service using Node.js API
+  // Hybrid check for single service: Try server-side first, fallback to browser
   const refreshSingleService = async (url: UrlWithStatus) => {
     setRefreshingUrlId(url.id)
 
     try {
+      // First, try server-side check
       const response = await fetch("/api/check/url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -157,8 +298,14 @@ export default function AdminDashboard() {
         return
       }
 
-      // Result is automatically saved to database by the API
-      // Just refresh the URL list to show updated status
+      const data = await response.json()
+      
+      // If server-side check indicates browser fallback is needed, use browser check
+      if (data.result?.needs_browser_fallback) {
+        await runBrowserCheckForUrl(url)
+      }
+
+      // Refresh URLs to show updated status
       fetchUrls()
     } catch (error: any) {
       console.error("Error checking URL:", error)

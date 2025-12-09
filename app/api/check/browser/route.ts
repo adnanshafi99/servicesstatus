@@ -24,10 +24,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Save browser check result to database
+    const checkedAt = new Date().toISOString();
     await db.execute({
       sql: `
-        INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO url_status (url_id, status_code, status_text, response_time, is_up, error_message, location, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         urlId,
@@ -36,6 +37,8 @@ export async function POST(request: NextRequest) {
         responseTime || null,
         isUp ? 1 : 0,
         errorMessage || null,
+        null, // Browser checks don't detect redirects, so location is null
+        checkedAt,
       ],
     });
 

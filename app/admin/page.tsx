@@ -141,21 +141,21 @@ export default function AdminDashboard() {
         isUp = true
         statusCode = 200 // Best guess with no-cors mode
       } catch (fetchError: any) {
-        // Fetch failed - check if it's a real connection error
+        // Fetch failed - check if it's a REAL connection error (not generic "Failed to fetch")
         const errorMsg = fetchError.message || fetchError.toString() || ''
         const errorName = fetchError.name || ''
         
-        // Detect actual connection errors (not CORS)
+        // Only treat SPECIFIC connection errors as connection errors
+        // "Failed to fetch" and "TypeError" are too generic - they can be CORS, network, or other issues
+        // We need to verify with image/iframe fallback for these cases
         const isConnectionError = 
-          errorMsg.includes('Failed to fetch') ||
           errorMsg.includes('ERR_CONNECTION_RESET') ||
           errorMsg.includes('ERR_CONNECTION_REFUSED') ||
           errorMsg.includes('ERR_CONNECTION_CLOSED') ||
           errorMsg.includes('ERR_CONNECTION_TIMED_OUT') ||
-          errorMsg.includes('networkerror') ||
-          errorMsg.includes('NetworkError') ||
-          errorName === 'TypeError' ||
-          errorName === 'AbortError'
+          errorMsg.includes('ERR_NAME_NOT_RESOLVED') ||
+          errorMsg.includes('ERR_INTERNET_DISCONNECTED') ||
+          errorName === 'AbortError' // Timeout is a real connection issue
 
         if (isConnectionError) {
           // Real connection error - site is down
@@ -179,11 +179,13 @@ export default function AdminDashboard() {
           return
         }
         
-        // If it's not a connection error (likely CORS), fall back to image/iframe
+        // If it's not a specific connection error (could be CORS or fetch limitation),
+        // fall back to image/iframe to verify - this will correctly detect if site is up
         // Continue below to image/iframe fallback
       }
 
-      // Fallback to image/iframe if fetch didn't work (likely CORS issue)
+      // Fallback to image/iframe if fetch didn't work (CORS, fetch limitation, or to verify)
+      // This handles cases where fetch fails with generic errors but site is actually up
       if (!isUp && !errorMessage) {
         // Helper: probe via <img> to favicon
         const probeWithImage = (targetUrl: string): Promise<{ ok: boolean; ms: number }> => {

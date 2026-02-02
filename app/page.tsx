@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import type { UrlWithStatus } from "@/lib/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { CheckCircle2, XCircle, AlertCircle, Activity, Clock, TrendingUp } from "lucide-react"
+import { CheckCircle2, XCircle, AlertCircle, Activity, Clock, TrendingUp, Wifi, WifiOff, RefreshCw } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -39,15 +39,15 @@ export default function ServiceStatusDashboard() {
   const [selectedService, setSelectedService] = useState<Service | null>(null)
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [refreshCountdown, setRefreshCountdown] = useState(30)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date>(new Date())
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  useEffect(() => {
-    fetchServices()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchServices, 30000)
-    return () => clearInterval(interval)
-  }, [environment])
+  const REFRESH_INTERVAL = 30000 // 30 seconds
 
-  const fetchServices = async () => {
+  const fetchServices = useCallback(async () => {
     try {
       const response = await fetch(`/api/urls?environment=${environment}`)
       const data: UrlWithStatus[] = await response.json()
@@ -78,12 +78,48 @@ export default function ServiceStatusDashboard() {
       })
 
       setServices(transformedServices)
+      setLastRefreshTime(new Date())
     } catch (error) {
       console.error("Error fetching services:", error)
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
-  }
+  }, [environment])
+
+  useEffect(() => {
+    fetchServices()
+    
+    // Set up refresh interval
+    refreshIntervalRef.current = setInterval(() => {
+      setIsRefreshing(true)
+      fetchServices().finally(() => {
+        setIsRefreshing(false)
+        setRefreshCountdown(REFRESH_INTERVAL / 1000)
+        setLastRefreshTime(new Date())
+      })
+    }, REFRESH_INTERVAL)
+
+    // Set up countdown timer
+    countdownIntervalRef.current = setInterval(() => {
+      setRefreshCountdown((prev) => {
+        if (prev <= 1) {
+          return REFRESH_INTERVAL / 1000
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => {
+      if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current)
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current)
+    }
+  }, [environment, fetchServices])
+
+  // Reset countdown when environment changes
+  useEffect(() => {
+    setRefreshCountdown(REFRESH_INTERVAL / 1000)
+  }, [environment])
 
   const fetchHistory = async (serviceId: string) => {
     setLoadingHistory(true)
@@ -115,32 +151,53 @@ export default function ServiceStatusDashboard() {
 
   const getOverallStatus = () => {
     const downCount = services.filter((s) => s.status === "down").length
+    const totalCount = services.length
+    const upCount = totalCount - downCount
+    
     if (downCount > 0) {
       const text = downCount === 1 ? "1 Service Down" : `${downCount} Services Down`
-      return { text, icon: XCircle, color: "bg-red-500/10 text-red-500 border-red-500/20" }
+      return { 
+        text, 
+        icon: XCircle, 
+        color: "bg-red-600 text-white",
+        bgGradient: "from-red-600 to-red-700",
+        count: { up: upCount, down: downCount, total: totalCount }
+      }
     }
     return {
-      text: "All systems operational",
+      text: "All Systems Operational",
       icon: CheckCircle2,
-      color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+      color: "bg-emerald-600 text-white",
+      bgGradient: "from-emerald-600 to-emerald-700",
+      count: { up: upCount, down: downCount, total: totalCount }
     }
   }
 
   const getStatusBadge = (status: ServiceStatus) => {
     switch (status) {
       case "up":
-        return { text: "UP", className: "bg-emerald-500 hover:bg-emerald-600 text-white" }
+        return { 
+          text: "UP", 
+          className: "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/50",
+          icon: Wifi,
+          pulse: true
+        }
       case "down":
-        return { text: "DOWN", className: "bg-red-500 hover:bg-red-600 text-white" }
+        return { 
+          text: "DOWN", 
+          className: "bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/50",
+          icon: WifiOff,
+          pulse: false
+        }
     }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-muted-foreground">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="flex flex-col items-center gap-6">
+          <div className="h-16 w-16 animate-spin rounded-full border-8 border-blue-500 border-t-transparent" />
+          <p className="text-2xl text-white font-semibold">Loading Services...</p>
         </div>
       </div>
     )
@@ -150,154 +207,202 @@ export default function ServiceStatusDashboard() {
   const StatusIcon = overallStatus.icon
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold tracking-tight text-balance">Service Status</h1>
-          <p className="mt-2 text-muted-foreground">Real-time status and updates for our systems</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {/* Top Status Bar */}
+      <div className={`sticky top-0 z-50 ${overallStatus.color} shadow-2xl border-b-4 ${overallStatus.color === "bg-red-600" ? "border-red-800" : "border-emerald-800"}`}>
+        <div className="mx-auto px-8 py-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              <StatusIcon className={`h-12 w-12 ${isRefreshing ? "animate-spin" : "animate-pulse"}`} />
+              <div>
+                <h1 className="text-4xl font-bold tracking-tight">Service Status Dashboard</h1>
+                <p className="text-xl mt-1 opacity-90">{overallStatus.text}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-8">
+              <div className="text-right">
+                <div className="text-3xl font-bold">{overallStatus.count.up}/{overallStatus.count.total}</div>
+                <div className="text-lg opacity-90">Services Online</div>
+              </div>
+              {/* Auto-refresh indicator */}
+              <div className="flex flex-col items-end gap-2 border-l-2 border-white/20 pl-8">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className={`h-5 w-5 ${isRefreshing ? "animate-spin" : ""}`} />
+                  <span className="text-lg font-semibold">Auto-refresh</span>
+                </div>
+                <div className="text-sm opacity-90">
+                  {isRefreshing ? (
+                    <span className="animate-pulse">Refreshing...</span>
+                  ) : (
+                    <span>Next refresh in {refreshCountdown}s</span>
+                  )}
+                </div>
+                <div className="text-xs opacity-75">
+                  Last: {formatBeaumontDateShort(lastRefreshTime)}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
 
-        {/* Environment Tabs */}
-        <Tabs value={environment} onValueChange={(value) => setEnvironment(value as "testing" | "production")} className="mb-6">
-          <TabsList>
-            <TabsTrigger value="testing">Testing</TabsTrigger>
-            <TabsTrigger value="production">Production</TabsTrigger>
+      <div className="mx-auto px-8 py-8 max-w-[1920px]">
+        {/* Environment Tabs - Larger */}
+        <Tabs value={environment} onValueChange={(value) => setEnvironment(value as "testing" | "production")} className="mb-8">
+          <TabsList className="h-16 w-fit">
+            <TabsTrigger value="testing" className="text-xl px-8 py-4">Testing</TabsTrigger>
+            <TabsTrigger value="production" className="text-xl px-8 py-4">Production</TabsTrigger>
           </TabsList>
         </Tabs>
 
-        {/* Overall Status Banner */}
-        <Card className={`mb-8 border ${overallStatus.color}`}>
-          <CardContent className="flex items-center gap-3 py-6">
-            <StatusIcon className="h-6 w-6" />
-            <span className="text-lg font-semibold">{overallStatus.text}</span>
-            <Badge variant="outline" className="ml-auto">
-              {environment === "production" ? "Production" : "Testing"}
-            </Badge>
-          </CardContent>
-        </Card>
+        {/* Services Grid - Optimized for TV */}
+        {services.length === 0 ? (
+          <Card className="border-2 border-slate-800 bg-slate-900/90 backdrop-blur-sm">
+            <CardContent className="flex flex-col items-center justify-center py-24 text-slate-50">
+              <AlertCircle className="h-20 w-20 mb-6" />
+              <p className="text-2xl text-center">
+                No services configured yet. Please contact an administrator.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-8 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {services.map((service) => {
+              const statusBadge = getStatusBadge(service.status)
+              const StatusIcon = statusBadge.icon
+              const isUp = service.status === "up"
+              
+              return (
+                <Card
+                  key={service.id}
+                  className={`border-4 bg-slate-900/90 backdrop-blur-sm transition-all duration-300 cursor-pointer transform hover:scale-105 hover:shadow-2xl ${
+                    isUp
+                      ? "border-emerald-500/70 hover:border-emerald-400 shadow-emerald-500/20"
+                      : "border-red-500/70 hover:border-red-400 shadow-red-500/20"
+                  }`}
+                  onClick={() => handleServiceClick(service)}
+                >
+                  <CardHeader className="pb-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="text-2xl font-bold leading-tight text-white mb-2">
+                          {service.name}
+                        </CardTitle>
+                        <a
+                          href={service.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="block text-sm text-blue-400 hover:text-blue-300 hover:underline break-all"
+                        >
+                          {service.url}
+                        </a>
+                      </div>
+                      <div className={`flex-shrink-0 ${statusBadge.pulse ? "animate-pulse" : ""}`}>
+                        <StatusIcon className={`h-10 w-10 ${isUp ? "text-emerald-400" : "text-red-400"}`} />
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Large Status Badge */}
+                    <div className="flex items-center justify-center py-4">
+                      <Badge className={`${statusBadge.className} text-2xl font-bold px-8 py-3 rounded-lg`}>
+                        {statusBadge.text}
+                      </Badge>
+                    </div>
 
-        {/* Services Status Section */}
-        <div className="mb-8">
-          <h2 className="mb-6 text-2xl font-bold">Services</h2>
-          {services.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-16">
-                <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground text-center">
-                  No services configured yet. Please contact an administrator.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {services.map((service) => {
-                const statusBadge = getStatusBadge(service.status)
-                return (
-                  <Card
-                    key={service.id}
-                    className="border-border hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => handleServiceClick(service)}
-                  >
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <CardTitle className="text-lg leading-tight text-balance">
-                            {service.name}
-                          </CardTitle>
-                          <a
-                            href={service.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-1.5 block text-sm text-blue-600 hover:text-blue-700 hover:underline break-all"
-                          >
-                            {service.url}
-                          </a>
+                    {/* Metrics Grid */}
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-700 text-slate-50">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-slate-100">
+                          <Activity className="h-5 w-5" />
+                          <span className="text-sm font-medium">Status Code</span>
+                        </div>
+                        <div className="text-2xl font-bold text-white font-mono">{service.statusCode}</div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-slate-100">
+                          <Clock className="h-5 w-5" />
+                          <span className="text-sm font-medium">Response</span>
+                        </div>
+                        <div className="text-2xl font-bold text-white font-mono">{service.responseTime}ms</div>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <div className="flex items-center gap-2 text-slate-100">
+                          <TrendingUp className="h-5 w-5" />
+                          <span className="text-sm font-medium">Uptime (7 days)</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-4 bg-slate-800 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all ${
+                                service.uptime >= 99 ? "bg-emerald-500" : 
+                                service.uptime >= 95 ? "bg-yellow-500" : "bg-red-500"
+                              }`}
+                              style={{ width: `${service.uptime}%` }}
+                            />
+                          </div>
+                          <div className="text-2xl font-extrabold text-white font-mono min-w-[80px] text-right drop-shadow">
+                            {service.uptime.toFixed(1)}%
+                          </div>
                         </div>
                       </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Status</span>
-                        <Badge className={statusBadge.className}>{statusBadge.text}</Badge>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Activity className="h-4 w-4" />
-                          <span>Status Code</span>
-                        </div>
-                        <span className="font-mono text-sm font-medium">{service.statusCode}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Clock className="h-4 w-4" />
-                          <span>Response Time</span>
-                        </div>
-                        <span className="font-mono text-sm font-medium">{service.responseTime}ms</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Last Checked</span>
-                        <span className="text-xs text-muted-foreground">{service.lastChecked}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <TrendingUp className="h-4 w-4" />
-                          <span>Uptime (7 days)</span>
-                        </div>
-                        <span className="font-mono text-sm font-medium">{service.uptime.toFixed(1)}%</span>
-                      </div>
-                      {service.errorMessage && (
-                        <Alert className="bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-900/50">
-                          <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                          <AlertDescription className="text-sm text-red-800 dark:text-red-300">
-                            {service.errorMessage}
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-          )}
-        </div>
+                    </div>
+
+                    {service.errorMessage && (
+                      <Alert className="bg-red-950/50 border-red-500/50 mt-4">
+                        <AlertCircle className="h-5 w-5 text-red-400" />
+                        <AlertDescription className="text-base text-red-200 font-medium">
+                          {service.errorMessage}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="text-sm text-slate-200 pt-2 border-t border-slate-700">
+                      Last checked: {service.lastChecked}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        )}
 
         {/* Footer */}
-        <footer className="mt-12 border-t border-border pt-8">
-          <div className="text-center text-sm text-muted-foreground">
+        <footer className="mt-16 border-t-2 border-slate-700 pt-8">
+          <div className="text-center text-lg text-slate-100">
             Last updated: {formatBeaumontDateShort(new Date())}
           </div>
         </footer>
       </div>
 
-      {/* Details Modal with Check History */}
+      {/* Details Modal */}
       <Dialog open={!!selectedService} onOpenChange={() => setSelectedService(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh]">
+        <DialogContent className="max-w-4xl max-h-[90vh] bg-slate-800 border-slate-700">
           <DialogHeader>
-            <DialogTitle className="text-2xl">{selectedService?.name}</DialogTitle>
-            <DialogDescription className="break-all">{selectedService?.url}</DialogDescription>
+            <DialogTitle className="text-3xl text-white">{selectedService?.name}</DialogTitle>
+            <DialogDescription className="break-all text-slate-400 text-lg">{selectedService?.url}</DialogDescription>
           </DialogHeader>
-          <ScrollArea className="h-[500px] pr-4">
-            <div className="space-y-2">
-              <h3 className="text-lg font-semibold mb-4">Check History</h3>
+          <ScrollArea className="h-[600px] pr-4">
+            <div className="space-y-4">
+              <h3 className="text-2xl font-semibold mb-4 text-white">Check History</h3>
               {loadingHistory ? (
-                <div className="flex items-center justify-center py-8">
+                <div className="flex items-center justify-center py-12">
                   <div className="flex flex-col items-center gap-4">
-                    <div className="h-6 w-6 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                    <p className="text-sm text-muted-foreground">Loading history...</p>
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                    <p className="text-lg text-slate-400">Loading history...</p>
                   </div>
                 </div>
               ) : history.length === 0 ? (
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-8">
-                    <AlertCircle className="h-8 w-8 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground">No check history available</p>
+                <Card className="bg-slate-800/50 border-slate-700">
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <AlertCircle className="h-12 w-12 text-slate-400 mb-4" />
+                    <p className="text-lg text-slate-400">No check history available</p>
                   </CardContent>
                 </Card>
               ) : (
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <div className="bg-muted/50 grid grid-cols-12 gap-4 px-4 py-3 text-xs font-medium text-muted-foreground">
+                <div className="border-2 border-slate-700 rounded-lg overflow-hidden bg-slate-900/50">
+                  <div className="bg-slate-800 grid grid-cols-12 gap-4 px-6 py-4 text-sm font-bold text-slate-300">
                     <div className="col-span-5">Time</div>
                     <div className="col-span-2">Status</div>
                     <div className="col-span-2">Code</div>
@@ -306,18 +411,18 @@ export default function ServiceStatusDashboard() {
                   {history.map((check, index) => (
                     <div
                       key={index}
-                      className={`grid grid-cols-12 gap-4 px-4 py-3 border-t border-border items-center ${
-                        check.status === "down" ? "bg-red-50/50 dark:bg-red-950/20" : "bg-background hover:bg-muted/30"
+                      className={`grid grid-cols-12 gap-4 px-6 py-4 border-t border-slate-700 items-center ${
+                        check.status === "down" ? "bg-red-950/20" : "bg-slate-800/30 hover:bg-slate-800/50"
                       } transition-colors`}
                     >
-                      <div className="col-span-5 text-sm text-muted-foreground">{check.timestamp}</div>
+                      <div className="col-span-5 text-base text-slate-300">{check.timestamp}</div>
                       <div className="col-span-2">
-                        <Badge className={`${getStatusBadge(check.status).className} text-xs`}>
+                        <Badge className={`${getStatusBadge(check.status).className} text-sm font-bold`}>
                           {getStatusBadge(check.status).text}
                         </Badge>
                       </div>
-                      <div className="col-span-2 text-sm font-mono font-medium">{check.statusCode}</div>
-                      <div className="col-span-3 text-sm font-mono font-medium">{check.responseTime}ms</div>
+                      <div className="col-span-2 text-base font-mono font-bold text-white">{check.statusCode}</div>
+                      <div className="col-span-3 text-base font-mono font-bold text-white">{check.responseTime}ms</div>
                     </div>
                   ))}
                 </div>

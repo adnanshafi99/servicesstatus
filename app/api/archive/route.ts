@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { archiveOldStatusRecords } from '@/lib/archive';
 import { getAuthSession } from '@/lib/auth';
 
+// Mark this route as dynamic since it uses cookies for authentication
+export const dynamic = 'force-dynamic';
+
 /**
  * Archive endpoint - can be called manually or via cron
  * Moves status records older than 7 days to archive table

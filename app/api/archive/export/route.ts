@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { exportArchivedRecordsToText } from '@/lib/file-archive';
 import { getAuthSession } from '@/lib/auth';
 
+// Mark this route as dynamic since it uses cookies for authentication
+export const dynamic = 'force-dynamic';
+
 /**
  * Export archived records as a text file
  * Requires authentication

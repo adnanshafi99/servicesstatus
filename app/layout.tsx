@@ -7,8 +7,8 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Service Status Dashboard",
-  description: "Real-time status and updates for our systems",
+  title: "Banner ERP Applications Status",
+  description: "Real-time status and updates for Banner ERP Applications",
 }
 
 export default function RootLayout({

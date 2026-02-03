@@ -1,11 +1,12 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import Image from "next/image"
 import type { UrlWithStatus } from "@/lib/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { CheckCircle2, XCircle, AlertCircle, Activity, Clock, TrendingUp, Wifi, WifiOff, RefreshCw } from "lucide-react"
+import { CheckCircle2, XCircle, AlertCircle, Activity, Clock, TrendingUp, Wifi, WifiOff, RefreshCw, ExternalLink } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -87,6 +88,15 @@ export default function ServiceStatusDashboard() {
     }
   }, [environment])
 
+  // Manual (on-demand) refresh handler
+  const handleManualRefresh = () => {
+    if (isRefreshing) return
+
+    setIsRefreshing(true)
+    setRefreshCountdown(REFRESH_INTERVAL / 1000)
+    void fetchServices()
+  }
+
   useEffect(() => {
     fetchServices()
     
@@ -167,8 +177,8 @@ export default function ServiceStatusDashboard() {
     return {
       text: "All Systems Operational",
       icon: CheckCircle2,
-      color: "bg-emerald-600 text-white",
-      bgGradient: "from-emerald-600 to-emerald-700",
+      color: "bg-[#B00C14] text-white",
+      bgGradient: "from-[#B00C14] to-[#8A0A10]",
       count: { up: upCount, down: downCount, total: totalCount }
     }
   }
@@ -178,7 +188,7 @@ export default function ServiceStatusDashboard() {
       case "up":
         return { 
           text: "UP", 
-          className: "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/50",
+          className: "bg-[#B00C14] hover:bg-[#8A0A10] text-white shadow-lg shadow-[#B00C14]/50",
           icon: Wifi,
           pulse: true
         }
@@ -208,36 +218,55 @@ export default function ServiceStatusDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Top Status Bar */}
-      <div className={`sticky top-0 z-50 ${overallStatus.color} shadow-2xl border-b-4 ${overallStatus.color === "bg-red-600" ? "border-red-800" : "border-emerald-800"}`}>
-        <div className="mx-auto px-8 py-6">
+      {/* Top Status Bar - Lamar University Style */}
+      <div className="sticky top-0 z-50 bg-white shadow-lg border-b-4 border-[#B00C14]">
+        <div className="mx-auto px-8 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <StatusIcon className={`h-12 w-12 ${isRefreshing ? "animate-spin" : "animate-pulse"}`} />
+            {/* Left: Logo and Title */}
+            <div className="flex items-center gap-4">
+              <Image 
+                src="/lamar-university-texas-logo.png" 
+                alt="Lamar University Logo" 
+                width={180}
+                height={56}
+                className="h-14 w-auto object-contain"
+                priority
+              />
+              <div className="border-l-2 border-gray-300 h-12"></div>
               <div>
-                <h1 className="text-4xl font-bold tracking-tight">Service Status Dashboard</h1>
-                <p className="text-xl mt-1 opacity-90">{overallStatus.text}</p>
+                <h1 className="text-3xl font-bold text-[#B00C14] tracking-tight">Banner ERP Applications Status</h1>
+                <p className={`text-lg mt-1 font-medium ${overallStatus.count.down > 0 ? "text-red-600" : "text-[#B00C14]"}`}>
+                  {overallStatus.text}
+                </p>
               </div>
             </div>
+            
+            {/* Right: Status Count and Refresh */}
             <div className="flex items-center gap-8">
               <div className="text-right">
-                <div className="text-3xl font-bold">{overallStatus.count.up}/{overallStatus.count.total}</div>
-                <div className="text-lg opacity-90">Services Online</div>
+                <div className={`text-3xl font-bold ${overallStatus.count.down > 0 ? "text-red-600" : "text-[#B00C14]"}`}>
+                  {overallStatus.count.up}/{overallStatus.count.total}
+                </div>
+                <div className="text-sm text-gray-600 font-medium">Services Online</div>
               </div>
               {/* Auto-refresh indicator */}
-              <div className="flex flex-col items-end gap-2 border-l-2 border-white/20 pl-8">
-                <div className="flex items-center gap-2">
-                  <RefreshCw className={`h-5 w-5 ${isRefreshing ? "animate-spin" : ""}`} />
-                  <span className="text-lg font-semibold">Auto-refresh</span>
-                </div>
-                <div className="text-sm opacity-90">
+              <div className="flex flex-col items-end gap-1 border-l-2 border-gray-300 pl-6">
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  className="flex items-center gap-2 cursor-pointer hover:opacity-80 active:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B00C14]/50 rounded-md"
+                >
+                  <RefreshCw className={`h-4 w-4 text-[#B00C14] ${isRefreshing ? "animate-spin" : ""}`} />
+                  <span className="text-sm font-semibold text-[#B00C14]">Auto-refresh</span>
+                </button>
+                <div className="text-xs text-gray-600">
                   {isRefreshing ? (
-                    <span className="animate-pulse">Refreshing...</span>
+                    <span className="animate-pulse text-[#B00C14]">Refreshing...</span>
                   ) : (
                     <span>Next refresh in {refreshCountdown}s</span>
                   )}
                 </div>
-                <div className="text-xs opacity-75">
+                <div className="text-xs text-gray-500">
                   Last: {formatBeaumontDateShort(lastRefreshTime)}
                 </div>
               </div>
@@ -275,17 +304,17 @@ export default function ServiceStatusDashboard() {
               return (
                 <Card
                   key={service.id}
-                  className={`border-4 bg-slate-900/90 backdrop-blur-sm transition-all duration-300 cursor-pointer transform hover:scale-105 hover:shadow-2xl ${
+                  className={`border-4 bg-slate-900/90 backdrop-blur-sm transition-all duration-300 cursor-pointer transform hover:scale-105 hover:shadow-2xl flex flex-col ${
                     isUp
-                      ? "border-emerald-500/70 hover:border-emerald-400 shadow-emerald-500/20"
+                      ? "border-[#B00C14]/70 hover:border-[#B00C14] shadow-[#B00C14]/20"
                       : "border-red-500/70 hover:border-red-400 shadow-red-500/20"
                   }`}
                   onClick={() => handleServiceClick(service)}
                 >
-                  <CardHeader className="pb-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <CardTitle className="text-2xl font-bold leading-tight text-white mb-2">
+                  <CardHeader className="pb-4 flex-shrink-0 h-32">
+                    <div className="grid grid-cols-[1fr_auto] gap-4 h-full">
+                      <div className="flex flex-col justify-between min-w-0">
+                        <CardTitle className="text-2xl font-bold leading-tight text-white line-clamp-2 flex-1">
                           {service.name}
                         </CardTitle>
                         <a
@@ -293,19 +322,20 @@ export default function ServiceStatusDashboard() {
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="block text-sm text-blue-400 hover:text-blue-300 hover:underline break-all"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-[#B00C14]/20 hover:bg-[#B00C14]/30 border border-[#B00C14]/50 rounded-lg transition-colors text-sm font-medium text-white hover:text-white group w-fit mt-2"
                         >
-                          {service.url}
+                          <ExternalLink className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                          <span>Open Service</span>
                         </a>
                       </div>
-                      <div className={`flex-shrink-0 ${statusBadge.pulse ? "animate-pulse" : ""}`}>
-                        <StatusIcon className={`h-10 w-10 ${isUp ? "text-emerald-400" : "text-red-400"}`} />
+                      <div className={`flex flex-col items-end justify-start ${statusBadge.pulse ? "animate-pulse" : ""}`}>
+                        <StatusIcon className={`h-10 w-10 ${isUp ? "text-[#B00C14]" : "text-red-400"}`} />
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Large Status Badge */}
-                    <div className="flex items-center justify-center py-4">
+                  <CardContent className="space-y-4 flex-1 flex flex-col">
+                    {/* Large Status Badge - Fixed height container */}
+                    <div className="flex items-center justify-center h-20 flex-shrink-0">
                       <Badge className={`${statusBadge.className} text-2xl font-bold px-8 py-3 rounded-lg`}>
                         {statusBadge.text}
                       </Badge>
@@ -336,7 +366,7 @@ export default function ServiceStatusDashboard() {
                           <div className="flex-1 h-4 bg-slate-800 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full transition-all ${
-                                service.uptime >= 99 ? "bg-emerald-500" : 
+                                service.uptime >= 99 ? "bg-[#B00C14]" : 
                                 service.uptime >= 95 ? "bg-yellow-500" : "bg-red-500"
                               }`}
                               style={{ width: `${service.uptime}%` }}
